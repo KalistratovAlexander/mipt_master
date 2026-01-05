@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+
+# Data files (too large for git)
+data/*.jsonl
+data/*.csv
+data/prepared/*.parquet
+
+# Model checkpoints
+checkpoints/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# OS
+.DS_Store
+
