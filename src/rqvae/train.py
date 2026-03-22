@@ -10,10 +10,12 @@ import argparse
 import inspect
 import logging
 import re
+import sys
 import time
 from dataclasses import dataclass
+from multiprocessing import current_process
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any, Optional
 
 import numpy as np
 import pyarrow.parquet as pq
@@ -29,10 +31,70 @@ from .model import (
     VectorQuantizer,
 )
 
-if TYPE_CHECKING:
-    from mipt_master.src.device import DeviceInfo
-
 logger = logging.getLogger("train-rqvae")
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Device management
+# ═══════════════════════════════════════════════════════════════════════════
+
+@dataclass(frozen=True)
+class DeviceInfo:
+    """Device capabilities for optimal DataLoader and training configuration."""
+    device: str
+    is_cuda: bool
+    is_mps: bool
+    is_cpu: bool
+    supports_pin_memory: bool
+    default_num_workers: int
+    default_prefetch_factor: Optional[int]
+
+    def get_dataloader_kwargs(self) -> dict:
+        workers = self.default_num_workers
+        prefetch = self.default_prefetch_factor
+        kwargs = {"num_workers": workers, "pin_memory": self.supports_pin_memory}
+        if workers > 0 and prefetch is not None:
+            kwargs["prefetch_factor"] = prefetch
+            kwargs["persistent_workers"] = True
+        return kwargs
+
+
+def get_device_info() -> DeviceInfo:
+    """Detect best available device and return optimal configuration."""
+    if torch.cuda.is_available():
+        torch.set_float32_matmul_precision("high")
+        return DeviceInfo("cuda", True, False, False, True, 16, 8)
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return DeviceInfo("mps", False, True, False, False, 0, None)
+    return DeviceInfo("cpu", False, False, True, False, 4, 2)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Logger setup
+# ═══════════════════════════════════════════════════════════════════════════
+
+def setup_logger(
+    name: str = "train-rqvae", level: int = logging.INFO,
+    log_to_file: bool = False, log_dir: str | Path = "logs",
+) -> logging.Logger:
+    log = logging.getLogger(name)
+    if log.handlers:
+        return log
+    log.setLevel(level)
+    log.propagate = False
+
+    console = logging.StreamHandler(sys.stdout)
+    console.setFormatter(logging.Formatter("%(asctime)s | %(levelname)-5s | %(message)s", datefmt="%H:%M:%S"))
+    log.addHandler(console)
+
+    if log_to_file and current_process().name == "MainProcess":
+        d = Path(log_dir)
+        d.mkdir(parents=True, exist_ok=True)
+        fh = logging.FileHandler(d / f"log-{time.strftime('%Y%m%d_%H%M%S')}.txt", encoding="utf-8")
+        fh.setFormatter(logging.Formatter("%(asctime)s | %(name)s | %(levelname)-5s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+        log.addHandler(fh)
+        log.info(f"Log file: {d / fh.baseFilename}")
+    return log
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -149,7 +211,6 @@ def _save_checkpoint(
     }
     torch.save(data, config.checkpoint_dir / f"checkpoint_step_{step}.pth")
 
-    # Rotate: keep only N most recent (sorted by step number, not alphabetically)
     existing = sorted(
         config.checkpoint_dir.glob("checkpoint_step_*.pth"),
         key=lambda p: int(m.group(1)) if (m := _CKPT_RE.search(p.name)) else 0,
@@ -325,8 +386,6 @@ def train_rqvae(
 # ═══════════════════════════════════════════════════════════════════════════
 
 def _cli_main(argv=None):
-    from mipt_master.src.device import get_device_info
-    from mipt_master.src.logger import setup_logger
     from .model import set_seed
 
     setup_logger("train-rqvae", log_to_file=True)

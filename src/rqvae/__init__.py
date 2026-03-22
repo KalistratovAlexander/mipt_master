@@ -10,4 +10,14 @@ from .model import (
     VectorQuantizer,
     set_seed,
 )
-from .train import Checkpoint, TrainState, load_checkpoint, load_embeddings, prepare_data, train_rqvae
+from .train import (
+    Checkpoint,
+    DeviceInfo,
+    TrainState,
+    get_device_info,
+    load_checkpoint,
+    load_embeddings,
+    prepare_data,
+    setup_logger,
+    train_rqvae,
+)
