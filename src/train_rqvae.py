@@ -1,19 +1,7 @@
 #!/usr/bin/env python3
-"""Совместимый entrypoint для обучения RQ-VAE.
+"""Entrypoint for RQ-VAE training."""
 
-Исторически файл был монолитным. Теперь реализация вынесена в пакет `mipt_master/src/rqvae`,
-а этот файл оставлен как тонкий враппер для привычного запуска.
-"""
-
-from rqvae.cli import main
-
+from mipt_master.src.rqvae.train import _cli_main
 
 if __name__ == "__main__":
-    main()
-
-if __name__ == "__main__":
-    # Совместимый entrypoint: теперь основная реализация лежит в src/rqvae/*
-    from mipt_master.src.rqvae.cli import main
-
-    main()
-
+    _cli_main()

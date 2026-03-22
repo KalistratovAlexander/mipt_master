@@ -7,16 +7,30 @@ __pycache__/
 *.egg-info/
 .eggs/
 
-# Data files (too large for git)
-data/*.jsonl
-data/*.csv
-data/prepared/*.parquet
+# Data (too large for git)
+data/raw/
+data/prepared/
+data/embeds/
+data/sequences/
+data/semantic_llm_training/
+data/checkpoint/
 
-# Model checkpoints
-checkpoints/
+# Models (too large for git)
+models/
+*.safetensors
+*.pth
+*.bin
+
+# Training artifacts
+fine_tune_*/result/
+*.tar
+*.tar.gz
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Logs
+pipeline/logs/
 
 # IDE
 .idea/
@@ -30,4 +44,7 @@ env/
 
 # OS
 .DS_Store
+Thumbs.db
 
+# Claude Code
+.claude/

@@ -1,292 +1,372 @@
-"""Тренировочный цикл RQ-VAE."""
+"""RQ-VAE training: data loading, training loop, checkpointing.
+
+Usage as CLI:
+    python -m mipt_master.src.rqvae.train --embeddings-path data/embeds/Pet_Supplies_items_with_embeddings.parquet
+"""
 
 from __future__ import annotations
 
+import argparse
 import inspect
 import logging
+import re
 import time
 from dataclasses import dataclass
-from typing import Any, Optional
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Optional
 
+import numpy as np
+import pyarrow.parquet as pq
 import torch
+from torch import Tensor
 from torch.utils.data import DataLoader
 
-from .config import RQVAEConfig
-from .metrics import avg_residual_norm, codebook_usage, unique_ids_proportion
-from .model import ForwardOutput, RQVAE
-from .quantization import EMAVectorQuantizer, VectorQuantizer
+from .model import (
+    EMAVectorQuantizer,
+    ForwardOutput,
+    RQVAE,
+    RQVAEConfig,
+    VectorQuantizer,
+)
+
+if TYPE_CHECKING:
+    from mipt_master.src.device import DeviceInfo
 
 logger = logging.getLogger("train-rqvae")
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# Data loading
+# ═══════════════════════════════════════════════════════════════════════════
+
+def load_embeddings(path: str | Path) -> Tensor:
+    """Load embeddings from parquet via pyarrow (zero-copy where possible)."""
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"Embeddings not found: {path}")
+
+    logger.info(f"Loading embeddings from {path}")
+    table = pq.read_table(path, columns=["embedding"])
+    if table.num_rows == 0:
+        raise ValueError(f"Empty file: {path}")
+
+    arr = table.column("embedding").combine_chunks()
+    offsets = arr.offsets.to_numpy(zero_copy_only=False)
+    d = int(offsets[1] - offsets[0])
+    flat = arr.values.to_numpy(zero_copy_only=False)
+
+    if flat.dtype != np.float32:
+        flat = flat.astype(np.float32)
+    elif not flat.flags.writeable:
+        flat = flat.copy()
+
+    emb = torch.from_numpy(flat.reshape(-1, d)).contiguous()
+    logger.info(f"Loaded {len(emb):,} embeddings, dim={d}")
+    return emb
+
+
+def prepare_data(
+    path: str | Path, config: RQVAEConfig, device_info: DeviceInfo,
+) -> tuple[DataLoader, DataLoader]:
+    """Load embeddings, split train/val, return DataLoaders."""
+    emb = load_embeddings(path)
+    n = len(emb)
+    val_size = int(n * config.val_split)
+    train_ds, val_ds = torch.utils.data.random_split(
+        emb, [n - val_size, val_size],
+        generator=torch.Generator().manual_seed(config.seed),
+    )
+    logger.info(f"Train: {n - val_size:,}, Val: {val_size:,}")
+
+    kw = device_info.get_dataloader_kwargs()
+    val_kw = {"num_workers": 0, "pin_memory": False} if device_info.is_mps else kw
+
+    return (
+        DataLoader(train_ds, batch_size=config.batch_size, shuffle=True, **kw),
+        DataLoader(val_ds, batch_size=config.batch_size, shuffle=False, **val_kw),
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Training metrics
+# ═══════════════════════════════════════════════════════════════════════════
+
+def codebook_usage(vq_layers) -> list[float]:
+    return [vq.get_usage_rate() for vq in vq_layers]
+
+
+def unique_ids_proportion(sids: Tensor) -> float:
+    B = sids.shape[0]
+    if B <= 1:
+        return 1.0
+    matches = (sids.unsqueeze(1) == sids.unsqueeze(0)).all(dim=-1)
+    return float((~torch.triu(matches, diagonal=1).any(dim=1)).sum().item() / B)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Checkpointing
+# ═══════════════════════════════════════════════════════════════════════════
+
+@dataclass
+class Checkpoint:
+    path: Path
+    epoch: int
+    step: int
+    best_loss: float
+    model_state_dict: dict[str, Any]
+    optimizer_state_dict: Optional[dict[str, Any]]
+    scheduler_state_dict: Optional[dict[str, Any]]
+    config: dict[str, Any]
+
+
+def load_checkpoint(path: Path, map_location: str | torch.device = "cpu") -> Checkpoint:
+    raw = torch.load(path, map_location=map_location, weights_only=False)
+    return Checkpoint(
+        path=path, epoch=int(raw.get("epoch", 0)), step=int(raw.get("step", 0)),
+        best_loss=float(raw.get("best_loss", raw.get("val_loss", float("inf")))),
+        model_state_dict=raw["model_state_dict"],
+        optimizer_state_dict=raw.get("optimizer_state_dict"),
+        scheduler_state_dict=raw.get("scheduler_state_dict"),
+        config=raw.get("config", {}),
+    )
+
+
+_CKPT_RE = re.compile(r"checkpoint_step_(\d+)\.pth$")
+_MAX_CHECKPOINTS = 3
+
+
+def _save_checkpoint(
+    model, optimizer, scheduler, metrics: dict, config: RQVAEConfig,
+    step: int, epoch: int, best_loss: float,
+) -> float:
+    config.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    data = {
+        "epoch": epoch, "step": step, "best_loss": best_loss,
+        "model_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "scheduler_state_dict": scheduler.state_dict() if scheduler else None,
+        "val_loss": metrics["val_loss"], "config": config.__dict__,
+    }
+    torch.save(data, config.checkpoint_dir / f"checkpoint_step_{step}.pth")
+
+    # Rotate: keep only N most recent (sorted by step number, not alphabetically)
+    existing = sorted(
+        config.checkpoint_dir.glob("checkpoint_step_*.pth"),
+        key=lambda p: int(m.group(1)) if (m := _CKPT_RE.search(p.name)) else 0,
+    )
+    while len(existing) > _MAX_CHECKPOINTS:
+        existing.pop(0).unlink()
+
+    if metrics["val_loss"] < best_loss:
+        best_loss = metrics["val_loss"]
+        data["best_loss"] = best_loss
+        torch.save(data, config.checkpoint_dir / "best_model.pth")
+        logger.info(f"New best model: val_loss={best_loss:.4e}")
+    return best_loss
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Training loop
+# ═══════════════════════════════════════════════════════════════════════════
+
 @dataclass
 class TrainState:
-    """Состояние обучения (для resume)."""
-
-    epoch: int = 0  # 0-indexed
+    epoch: int = 0
     global_step: int = 0
     best_loss: float = float("inf")
     optimizer_state_dict: Optional[dict[str, Any]] = None
     scheduler_state_dict: Optional[dict[str, Any]] = None
 
 
-def get_gradient_norm(model: torch.nn.Module) -> float:
-    """L2-норма градиентов по всем параметрам."""
-    grads = [p.grad for p in model.parameters() if p.grad is not None]
-    if not grads:
-        return 0.0
-    total_norm = torch.norm(torch.stack([torch.norm(g, 2) for g in grads]), 2)
-    return total_norm.item()
+def _build_scheduler(opt, cfg: RQVAEConfig, total: int):
+    if cfg.scheduler_type == "cosine":
+        return torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=total, eta_min=cfg.min_lr)
+    if cfg.scheduler_type == "cosine_with_warmup":
+        warmup = torch.optim.lr_scheduler.LinearLR(opt, start_factor=cfg.warmup_start_lr / cfg.max_lr, total_iters=cfg.warmup_steps)
+        cosine = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=max(1, total - cfg.warmup_steps), eta_min=cfg.min_lr)
+        return torch.optim.lr_scheduler.SequentialLR(opt, [warmup, cosine], milestones=[cfg.warmup_steps])
+    return None
 
 
 @torch.no_grad()
-def get_loss(model: RQVAE, val_loader: DataLoader, device: str) -> float:
-    """Средний loss по валидационному датасету."""
+def _val_loss(model, val_loader, device):
     model.eval()
-    total_loss = 0.0
-    batch_count = 0
+    total, n = 0.0, 0
     for data in val_loader:
         if isinstance(data, (list, tuple)):
             data = data[0]
-        data = data.to(device)
-        output: ForwardOutput = model(data)
-        total_loss += float(output.loss.item())
-        batch_count += 1
-    return total_loss / max(batch_count, 1)
+        total += model(data.to(device)).loss.item()
+        n += 1
+    return total / max(n, 1)
 
 
-def evaluate(
-    model: RQVAE,
-    val_loader: DataLoader,
-    train_loader: DataLoader,
-    device: str,
-    global_step: int,
-    epoch: int,  # 1-indexed для логов
-) -> dict:
-    """Валидация: val_loss + метрики на sample batch."""
+def _evaluate(model, val_loader, train_loader, device, step, epoch):
     model.eval()
-
     with torch.no_grad():
-        sample_batch = next(iter(train_loader))
-        if isinstance(sample_batch, (list, tuple)):
-            sample_batch = sample_batch[0]
-        sample_batch = sample_batch.to(device)
-
-        output: ForwardOutput = model(sample_batch)
-
+        batch = next(iter(train_loader))
+        if isinstance(batch, (list, tuple)):
+            batch = batch[0]
+        out: ForwardOutput = model(batch.to(device))
         usage = codebook_usage(model.vq_layers)
-        residual_norm = avg_residual_norm(output.residual)
-        semantic_ids = torch.stack(output.indices, dim=-1)
-        unique_proportion = unique_ids_proportion(semantic_ids)
-
-    val_loss = get_loss(model, val_loader, device)
-    usage_str = "/".join([f"{u:.2f}" for u in usage])
-
+        sids = torch.stack(out.indices, dim=-1)
+    val = _val_loss(model, val_loader, device)
     logger.info(
-        f"Step {global_step:05d} | Epoch {epoch:05d} | Val loss: {val_loss:.2e} | "
-        f"Codebook usage: {usage_str} | Avg residual norm: {residual_norm:.3f} | "
-        f"Unique ids: {unique_proportion:.1%}"
+        f"Step {step:05d} | Epoch {epoch:05d} | Val: {val:.2e} | "
+        f"Codebook: {'/'.join(f'{u:.2f}' for u in usage)} | "
+        f"Residual: {out.residual.norm(dim=-1).mean().item():.3f} | "
+        f"Unique: {unique_ids_proportion(sids):.1%}"
     )
-
-    return {
-        "val_loss": val_loss,
-        "codebook_usage": usage,
-        "codebook_usage_str": usage_str,
-        "avg_residual_norm": residual_norm,
-        "unique_ids_proportion": unique_proportion,
-    }
+    return {"val_loss": val}
 
 
-def save_checkpoint(
-    model: RQVAE,
-    optimizer: torch.optim.Optimizer,
-    scheduler: Optional[torch.optim.lr_scheduler.LRScheduler],
-    metrics: dict,
-    config: RQVAEConfig,
-    global_step: int,
-    epoch: int,
-    best_loss: float,
-) -> float:
-    """Сохранить чекпоинт и обновить best_loss."""
-    config.checkpoint_dir.mkdir(parents=True, exist_ok=True)
-
-    checkpoint_data = {
-        "epoch": epoch,
-        "step": global_step,
-        "best_loss": best_loss,
-        "model_state_dict": model.state_dict(),
-        "optimizer_state_dict": optimizer.state_dict(),
-        "scheduler_state_dict": scheduler.state_dict() if scheduler is not None else None,
-        "val_loss": metrics["val_loss"],
-        "config": config.__dict__,
-    }
-
-    checkpoint_path = config.checkpoint_dir / f"checkpoint_step_{global_step}.pth"
-    torch.save(checkpoint_data, checkpoint_path)
-    logger.info(f"Saved checkpoint to {checkpoint_path}")
-
-    if metrics["val_loss"] < best_loss:
-        best_loss = metrics["val_loss"]
-        best_model_path = config.checkpoint_dir / "best_model.pth"
-        checkpoint_data["best_loss"] = best_loss
-        torch.save(checkpoint_data, best_model_path)
-        logger.info(f"Saved best model with val_loss: {best_loss:.4e}")
-
-    return best_loss
+def _reset_codebooks(model, data_loader, device, config):
+    model.eval()
+    usage = codebook_usage(model.vq_layers)
+    batch = next(iter(data_loader))
+    if isinstance(batch, (list, tuple)):
+        batch = batch[0]
+    for lvl, vq in enumerate(model.vq_layers):
+        if isinstance(vq, VectorQuantizer) and not isinstance(vq, EMAVectorQuantizer):
+            if usage[lvl] < config.codebook_usage_threshold:
+                with torch.no_grad():
+                    residual = model.encode(batch.to(device))
+                    for i in range(lvl):
+                        residual = residual - model.vq_layers[i](residual).quantized
+                    vq.reset_unused_codes(residual)
+            vq.reset_usage_count()
+    model.train()
 
 
 def train_rqvae(
-    model: RQVAE,
-    data_loader: DataLoader,
-    config: RQVAEConfig,
-    device: str = "cpu",
-    val_loader: Optional[DataLoader] = None,
+    model: RQVAE, data_loader: DataLoader, config: RQVAEConfig,
+    device: str = "cpu", val_loader: Optional[DataLoader] = None,
     state: Optional[TrainState] = None,
 ) -> TrainState:
-    """Тренировочный цикл. Возвращает состояние (epoch/step/best_loss) для resume."""
     model = model.to(device)
     state = state or TrainState()
 
-    if config.use_kmeans_init and state.global_step == 0 and state.epoch == 0:
+    if config.use_kmeans_init and state.global_step == 0:
         model.kmeans_init(data_loader, device)
 
     if device == "cuda":
-        logger.info("Compiling model with torch.compile for faster training...")
         model = torch.compile(model)
 
-    fused_available = "fused" in inspect.signature(torch.optim.AdamW).parameters
-    use_fused = fused_available and device == "cuda"
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config.max_lr, weight_decay=0.01, fused=use_fused)
+    fused = "fused" in inspect.signature(torch.optim.AdamW).parameters and device == "cuda"
+    opt = torch.optim.AdamW(model.parameters(), lr=config.max_lr, weight_decay=0.01, fused=fused)
 
-    # Scheduler
     steps_per_epoch = max(1, len(data_loader) // config.gradient_accumulation_steps)
     total_steps = steps_per_epoch * config.num_epochs
-    logger.info(f"Total training steps: {total_steps:,} ({steps_per_epoch} steps/epoch x {config.num_epochs} epochs)")
+    sched = _build_scheduler(opt, config, total_steps)
+    logger.info(f"Training: {total_steps:,} steps ({steps_per_epoch}/epoch x {config.num_epochs})")
 
-    if config.scheduler_type == "cosine":
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=total_steps, eta_min=config.min_lr)
-        logger.info(f"Cosine annealing: {config.max_lr:.1e} -> {config.min_lr:.1e} for {total_steps:,} steps")
-    elif config.scheduler_type == "cosine_with_warmup":
-        warmup = torch.optim.lr_scheduler.LinearLR(
-            optimizer,
-            start_factor=config.warmup_start_lr / config.max_lr,
-            total_iters=config.warmup_steps,
-        )
-        logger.info(f"Warmup: {config.warmup_start_lr:.1e} -> {config.max_lr:.1e} for {config.warmup_steps:,} steps")
+    if state.optimizer_state_dict:
+        opt.load_state_dict(state.optimizer_state_dict)
+    if sched and state.scheduler_state_dict:
+        sched.load_state_dict(state.scheduler_state_dict)
 
-        cosine_steps = max(1, total_steps - config.warmup_steps)
-        cosine = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=cosine_steps, eta_min=config.min_lr)
-        logger.info(f"Cosine annealing: {config.max_lr:.1e} -> {config.min_lr:.1e} for {cosine_steps:,} steps")
-
-        scheduler = torch.optim.lr_scheduler.SequentialLR(optimizer, schedulers=[warmup, cosine], milestones=[config.warmup_steps])
-    else:
-        scheduler = None
-
-    # Resume states
-    if state.optimizer_state_dict is not None:
-        optimizer.load_state_dict(state.optimizer_state_dict)
-    if scheduler is not None and state.scheduler_state_dict is not None:
-        scheduler.load_state_dict(state.scheduler_state_dict)
-
-    best_loss = state.best_loss
-    global_step = state.global_step
+    best, step, ga = state.best_loss, state.global_step, config.gradient_accumulation_steps
 
     for epoch in range(state.epoch, config.num_epochs):
         model.train()
-
-        for batch_idx, data in enumerate(data_loader):
-            if batch_idx % config.gradient_accumulation_steps == 0:
-                t0 = time.time()
-                optimizer.zero_grad()
-                loss_accum = 0.0
-
+        for bi, data in enumerate(data_loader):
+            if bi % ga == 0:
+                t0, loss_acc = time.time(), 0.0
+                opt.zero_grad()
             if isinstance(data, (list, tuple)):
                 data = data[0]
+            out: ForwardOutput = model(data.to(device))
+            (out.loss / ga).backward()
+            loss_acc += out.loss.item()
 
-            output: ForwardOutput = model(data.to(device))
-            loss = output.loss / config.gradient_accumulation_steps
-            loss_accum += float(output.loss.detach().item())
-
-            loss.backward()
-
-            if (batch_idx + 1) % config.gradient_accumulation_steps == 0:
-                grad_norm_before = get_gradient_norm(model)
-
+            if (bi + 1) % ga == 0:
                 if config.use_gradient_clipping:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=config.gradient_clip_norm)
-                    grad_norm_after = get_gradient_norm(model)
-                else:
-                    grad_norm_after = grad_norm_before
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), config.gradient_clip_norm)
+                opt.step()
+                if sched:
+                    sched.step()
+                step += 1
+                dt = time.time() - t0
 
-                optimizer.step()
-                if scheduler is not None:
-                    scheduler.step()
-
-                t1 = time.time()
-                batch_time_ms = (t1 - t0) * 1000
-                samples_per_second = (data.shape[0] * config.gradient_accumulation_steps) / max((t1 - t0), 1e-9)
-                global_step += 1
-
-                avg_loss = loss_accum / config.gradient_accumulation_steps
-
-                if global_step == 1 or global_step % config.steps_per_train_log == 0:
-                    current_lr = optimizer.param_groups[0]["lr"]
+                if step == 1 or step % config.steps_per_train_log == 0:
                     usage = codebook_usage(model.vq_layers)
-                    semantic_ids = torch.stack(output.indices, dim=-1)
-                    unique_proportion = unique_ids_proportion(semantic_ids)
-                    usage_str = "/".join([f"{u:.2f}" for u in usage])
-
+                    sids = torch.stack(out.indices, dim=-1)
                     logger.info(
-                        f"Step {global_step:05d} | Epoch {epoch + 1:05d} | lr: {current_lr:.2e} | "
-                        f"loss: {avg_loss:.2e} | recon: {output.recon_loss.item():.2e} | "
-                        f"vq: {output.vq_loss.item():.2e} | codebook usage: {usage_str} | "
-                        f"unique ids: {unique_proportion:.1%} | time: {batch_time_ms:.0f}ms | "
-                        f"samples/s: {samples_per_second:,.0f}"
+                        f"Step {step:05d} | Epoch {epoch+1:05d} | lr: {opt.param_groups[0]['lr']:.2e} | "
+                        f"loss: {loss_acc/ga:.2e} | recon: {out.recon_loss.item():.2e} | "
+                        f"vq: {out.vq_loss.item():.2e} | cb: {'/'.join(f'{u:.2f}' for u in usage)} | "
+                        f"uniq: {unique_ids_proportion(sids):.1%} | {dt*1000:.0f}ms"
                     )
 
-                if global_step % config.steps_per_val_log == 0 and val_loader is not None:
-                    metrics = evaluate(model, val_loader, data_loader, device, global_step, epoch + 1)
-                    best_loss = save_checkpoint(
-                        model, optimizer, scheduler, metrics, config, global_step, epoch, best_loss
-                    )
+                if step % config.steps_per_val_log == 0 and val_loader:
+                    metrics = _evaluate(model, val_loader, data_loader, device, step, epoch + 1)
+                    best = _save_checkpoint(model, opt, sched, metrics, config, step, epoch, best)
                     model.train()
 
-                if config.reset_unused_codes and global_step % config.steps_per_codebook_reset == 0:
-                    if config.scheduler_type == "cosine_with_warmup" and global_step < config.warmup_steps:
-                        logger.debug(f"Step {global_step:05d} - Skipping codebook reset during warmup")
-                    else:
-                        model.eval()
-                        usage = codebook_usage(model.vq_layers)
+                if config.reset_unused_codes and step % config.steps_per_codebook_reset == 0:
+                    if not (config.scheduler_type == "cosine_with_warmup" and step < config.warmup_steps):
+                        _reset_codebooks(model, data_loader, device, config)
 
-                        reset_batch = next(iter(data_loader))
-                        if isinstance(reset_batch, (list, tuple)):
-                            reset_batch = reset_batch[0]
-
-                        for level, vq_layer in enumerate(model.vq_layers):
-                            if isinstance(vq_layer, VectorQuantizer) and not isinstance(vq_layer, EMAVectorQuantizer):
-                                if usage[level] < config.codebook_usage_threshold:
-                                    with torch.no_grad():
-                                        z = model.encode(reset_batch.to(device))
-                                        residual = z
-                                        for i in range(level):
-                                            vq_out = model.vq_layers[i](residual)
-                                            residual = residual - vq_out.quantized
-                                        vq_layer.reset_unused_codes(residual)
-                                vq_layer.reset_usage_count()
-                        model.train()
-
-        # неполная аккумуляция в конце эпохи
-        if (batch_idx + 1) % config.gradient_accumulation_steps != 0:
+        # Flush incomplete accumulation
+        if (bi + 1) % ga != 0:
             if config.use_gradient_clipping:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=config.gradient_clip_norm)
-            optimizer.step()
-            optimizer.zero_grad()
-            if scheduler is not None:
-                scheduler.step()
-            global_step += 1
+                torch.nn.utils.clip_grad_norm_(model.parameters(), config.gradient_clip_norm)
+            opt.step()
+            opt.zero_grad()
+            if sched:
+                sched.step()
+            step += 1
 
-        state.epoch = epoch + 1
-        state.global_step = global_step
-        state.best_loss = best_loss
-
+        state.epoch, state.global_step, state.best_loss = epoch + 1, step, best
     return state
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CLI
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _cli_main(argv=None):
+    from mipt_master.src.device import get_device_info
+    from mipt_master.src.logger import setup_logger
+    from .model import set_seed
+
+    setup_logger("train-rqvae", log_to_file=True)
+
+    p = argparse.ArgumentParser(description="Train RQ-VAE")
+    p.add_argument("--embeddings-path", type=Path, required=True)
+    p.add_argument("--checkpoint-dir", type=Path, default=Path("models/rqvae"))
+    p.add_argument("--batch-size", type=int, default=4096)
+    p.add_argument("--epochs", type=int, default=1000)
+    p.add_argument("--seed", type=int, default=42)
+    p.add_argument("--resume", type=Path, default=None)
+    args = p.parse_args(argv)
+
+    cfg = RQVAEConfig(
+        embeddings_path=args.embeddings_path, checkpoint_dir=args.checkpoint_dir,
+        batch_size=args.batch_size, num_epochs=args.epochs, seed=args.seed,
+    )
+    cfg.validate()
+    set_seed(cfg.seed)
+
+    dev = get_device_info()
+    cfg.log_config()
+    train_loader, val_loader = prepare_data(cfg.embeddings_path, cfg, dev)
+    model = RQVAE(cfg)
+
+    state = TrainState()
+    if args.resume:
+        ckpt = load_checkpoint(args.resume)
+        model.load_state_dict(ckpt.model_state_dict)
+        state = TrainState(ckpt.epoch, ckpt.step, ckpt.best_loss, ckpt.optimizer_state_dict, ckpt.scheduler_state_dict)
+
+    cfg.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+    state = train_rqvae(model=model, data_loader=train_loader, val_loader=val_loader, config=cfg, device=dev.device, state=state)
+
+    torch.save({
+        "model_state_dict": model.state_dict(),
+        "config": {k: (str(v) if isinstance(v, Path) else v) for k, v in cfg.__dict__.items()},
+        "epoch": state.epoch, "step": state.global_step, "best_loss": state.best_loss,
+    }, cfg.checkpoint_dir / "final_model.pth")
+
+
+if __name__ == "__main__":
+    _cli_main()
