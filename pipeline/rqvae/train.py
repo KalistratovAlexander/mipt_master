@@ -1,7 +1,7 @@
 """RQ-VAE training: data loading, training loop, checkpointing.
 
 Usage as CLI:
-    python -m mipt_master.src.rqvae.train --embeddings-path data/embeds/Pet_Supplies_items_with_embeddings.parquet
+    cd pipeline && python -m rqvae.train --embeddings-path ../data/embeds/Pet_Supplies_items_with_embeddings.parquet
 """
 
 from __future__ import annotations

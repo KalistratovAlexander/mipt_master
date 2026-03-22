@@ -49,6 +49,7 @@ pipeline/                          ML-пайплайн
   train_rqvae.ipynb                8. Обучение RQ-VAE → трёхуровневые коды (A,B,C)
   prepare_semantic_ids.ipynb       9. Назначение уровня D, формирование SID-токенов
   prepare_data_for_llm.ipynb      10. Генерация 4,7 млн обучающих диалогов
+  rqvae/                           RQ-VAE: модель, обучение, оценка
   evaluation/                      Скрипты оценки и результаты экспериментов
   fine_tune_1.8B/                  Скрипты обучения Qwen3-1.8B (vast.ai)
     stage1_vocab_expansion/        Stage 1: обучение только эмбеддингов
@@ -56,11 +57,6 @@ pipeline/                          ML-пайплайн
   fine_tune_8B/                    Скрипты обучения Qwen3-8B (vast.ai)
     stage1_vocab_expansion/
     stage2_full_finetune/
-
-src/                               Переиспользуемые модули
-  rqvae/                           RQ-VAE: модель, обучение, оценка
-  device.py                        Абстракция устройств (CUDA / MPS / CPU)
-  logger.py                        Конфигурация логирования
 
 models/                            Обученные модели (не отслеживаются в git)
   rqvae/                           Чекпоинт RQ-VAE (22 МБ)
