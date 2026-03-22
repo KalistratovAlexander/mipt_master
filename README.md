@@ -58,10 +58,10 @@ pipeline/                          ML-пайплайн
     stage1_vocab_expansion/
     stage2_full_finetune/
 
-models/                            Обученные модели (не отслеживаются в git)
-  rqvae/                           Чекпоинт RQ-VAE (22 МБ)
-  qwen3_1.8b_sid/                  Дообученная Qwen3-1.8B (3,2 ГБ)
-  qwen3_8b_sid/                    Дообученная Qwen3-8B (15 ГБ)
+models/                            Обученные модели (не отслеживаются в git, доступны на HuggingFace)
+  rqvae/                           Чекпоинт RQ-VAE — huggingface.co/kalistratov/rqvae-pet-supplies
+  qwen3_1.8b_sid/                  Дообученная Qwen3-1.8B — huggingface.co/kalistratov/qwen3-1.8b-semantic-ids
+  qwen3_8b_sid/                    Дообученная Qwen3-8B — huggingface.co/kalistratov/qwen3-8b-semantic-ids
 ```
 
 ## Воспроизведение
