@@ -329,7 +329,8 @@ _REASONING_SOURCES = {
         "assistant_field": "generated_solution",
     },
     "nvidia/OpenCodeReasoning": {
-        "split": "split_0",
+        "config": "split_0",       # HF requires explicit config name
+        "split": "split_0",        # split name matches config name
         "user_field": "input",
         "assistant_field": "output",
     },
@@ -387,8 +388,12 @@ def load_general_dataset(
             log.warning(f"Unknown source {source_name!r}, skipping")
             continue
 
-        log.info(f"Loading {source_name!r} (n={n:,}, split={cfg['split']})")
-        ds = load_dataset(source_name, split=cfg["split"], streaming=True)
+        hf_config = cfg.get("config")
+        log.info(f"Loading {source_name!r} (n={n:,}, split={cfg['split']}, config={hf_config})")
+        load_kw = {"split": cfg["split"], "streaming": True}
+        if hf_config:
+            load_kw["name"] = hf_config
+        ds = load_dataset(source_name, **load_kw)
         ds = ds.shuffle(seed=seed, buffer_size=10_000)
 
         rows = []
