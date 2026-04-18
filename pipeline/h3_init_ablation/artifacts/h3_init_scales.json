@@ -1,0 +1,32 @@
+{
+  "_comment": "Pre-registered constants for H3 4-way ablation. Committed BEFORE first training run. Editing after runs start = protocol violation.",
+  "_status": "target_frobenius=29.945332 from Qwen/Qwen3-0.6B via compute_target_frobenius(E, 1027, seed=0, n_reps=32). Split: ctrl=1.618470, sid=29.901563 (ctrl²+sid²=total²). Block-separate normalization keeps control-token magnitude arm-invariant. COMMITTED — editing after first run is a protocol violation.",
+  "model_name": "Qwen/Qwen3-0.6B",
+  "hidden_dim": 1024,
+  "n_new_tokens": 1027,
+  "n_control_tokens": 3,
+  "n_sid_tokens": 1024,
+  "target_frobenius": 29.945331931114197,
+  "target_frobenius_ctrl": 1.6184695649326446,
+  "target_frobenius_sid": 29.901562847650528,
+  "n_reps_for_target": 32,
+  "slice_seed": 0,
+  "arm_B_seed_offset": 1,
+  "arm_D_P_seed_offset": 1,
+  "arms": ["A", "B", "C", "D"],
+  "seeds": [42, 43, 44],
+  "statistical_protocol": {
+    "primary_metric": "recall@10_text_to_sid",
+    "omnibus": "friedman",
+    "omnibus_arms": ["A", "C", "D"],
+    "omnibus_excludes": ["B"],
+    "omnibus_exclude_reason": "arm B is variance-matched random control — descriptive only, not a candidate init",
+    "planned_contrasts": [["A", "C"], ["A", "D"], ["C", "D"]],
+    "bonferroni_m": 3,
+    "alpha": 0.05,
+    "alpha_corrected": 0.01667,
+    "n_bootstrap": 10000
+  },
+  "committed_before_runs": true,
+  "committed_git_sha": null
+}
