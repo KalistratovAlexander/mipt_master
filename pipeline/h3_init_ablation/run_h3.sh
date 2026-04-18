@@ -72,58 +72,72 @@ STAGE2_OUT="$RUN_DIR/stage2"
 # shellcheck source=/dev/null
 [[ -f "$WORKSPACE/setup.sh" ]] && source "$WORKSPACE/setup.sh"
 
-# --- Stage 1 ----------------------------------------------------------------
-echo ">>> [$(date +%T)] Stage 1 — vocab expansion"
-python3 "$WORKSPACE/stage1/train_1.8b.py" \
-    --model-name "$MODEL_NAME" \
-    --train-file "$DATA_DIR/semantic_llm_training/Pet_Supplies_conversations_train.parquet" \
-    --val-file "$DATA_DIR/semantic_llm_training/Pet_Supplies_conversations_val.parquet" \
-    --output-dir "$STAGE1_OUT" \
-    --max-seq-length 512 --max-train-samples "$S1_TRAIN_SAMPLES" --max-val-samples "$S1_VAL_SAMPLES" \
-    --lr 1e-3 --batch-size 64 --grad-accum 1 --max-steps "$S1_MAX_STEPS" --warmup-steps 100 \
-    --logging-steps 50 --eval-steps 250 --save-steps 500 --no-wandb \
-    --seed "$SEED" \
-    --init-strategy "$ARM" \
-    --init-seed "$SEED" \
-    --target-frobenius-ctrl "$TARGET_CTRL" \
-    --target-frobenius-sid "$TARGET_SID" \
-    --h3-module-path "$H3_DIR" \
-    "${ARM_EXTRA[@]}" \
-    2>&1 | tee "$RUN_DIR/stage1.log"
+# --- Stage 1 (skip if already done) -----------------------------------------
+if [[ -f "$STAGE1_OUT/final/config.json" ]]; then
+    echo ">>> [$(date +%T)] Stage 1 — SKIP (found $STAGE1_OUT/final)"
+else
+    echo ">>> [$(date +%T)] Stage 1 — vocab expansion"
+    python3 "$WORKSPACE/stage1/train_1.8b.py" \
+        --model-name "$MODEL_NAME" \
+        --train-file "$DATA_DIR/semantic_llm_training/Pet_Supplies_conversations_train.parquet" \
+        --val-file "$DATA_DIR/semantic_llm_training/Pet_Supplies_conversations_val.parquet" \
+        --output-dir "$STAGE1_OUT" \
+        --max-seq-length 512 --max-train-samples "$S1_TRAIN_SAMPLES" --max-val-samples "$S1_VAL_SAMPLES" \
+        --lr 1e-3 --batch-size 64 --grad-accum 1 --max-steps "$S1_MAX_STEPS" --warmup-steps 100 \
+        --logging-steps 50 --eval-steps 250 --save-steps 500 --no-wandb \
+        --seed "$SEED" \
+        --init-strategy "$ARM" \
+        --init-seed "$SEED" \
+        --target-frobenius-ctrl "$TARGET_CTRL" \
+        --target-frobenius-sid "$TARGET_SID" \
+        --h3-module-path "$H3_DIR" \
+        "${ARM_EXTRA[@]}" \
+        2>&1 | tee "$RUN_DIR/stage1.log"
+fi
 
-# --- Stage 2 ----------------------------------------------------------------
-echo ">>> [$(date +%T)] Stage 2 — full fine-tune"
-python3 "$WORKSPACE/stage2/train_1.8b.py" \
-    --stage1-model "$STAGE1_OUT/final" \
-    --train-file "$DATA_DIR/semantic_llm_training/Pet_Supplies_conversations_train.parquet" \
-    --val-file "$DATA_DIR/semantic_llm_training/Pet_Supplies_conversations_val.parquet" \
-    --output-dir "$STAGE2_OUT" \
-    --max-seq-length 512 --lr 2e-5 --batch-size 64 --grad-accum 2 \
-    --epochs 1 --max-train-samples "$S2_TRAIN_SAMPLES" \
-    --warmup-ratio 0.03 --weight-decay 0.01 --packing \
-    --snapshot-steps "$S2_SNAPSHOT_STEPS" --max-snapshots "$S2_MAX_SNAPSHOTS" \
-    --eval-steps 500 --sid-eval-samples 200 --logging-steps 25 --no-wandb \
-    --seed "$SEED" \
-    2>&1 | tee "$RUN_DIR/stage2.log"
+# --- Stage 2 (skip if already done) -----------------------------------------
+if [[ -f "$STAGE2_OUT/final/config.json" ]]; then
+    echo ">>> [$(date +%T)] Stage 2 — SKIP (found $STAGE2_OUT/final)"
+else
+    echo ">>> [$(date +%T)] Stage 2 — full fine-tune"
+    python3 "$WORKSPACE/stage2/train_1.8b.py" \
+        --stage1-model "$STAGE1_OUT/final" \
+        --train-file "$DATA_DIR/semantic_llm_training/Pet_Supplies_conversations_train.parquet" \
+        --val-file "$DATA_DIR/semantic_llm_training/Pet_Supplies_conversations_val.parquet" \
+        --output-dir "$STAGE2_OUT" \
+        --max-seq-length 512 --lr 2e-5 --batch-size 64 --grad-accum 2 \
+        --epochs 1 --max-train-samples "$S2_TRAIN_SAMPLES" \
+        --warmup-ratio 0.03 --weight-decay 0.01 --packing \
+        --snapshot-steps "$S2_SNAPSHOT_STEPS" --max-snapshots "$S2_MAX_SNAPSHOTS" \
+        --eval-steps 500 --sid-eval-samples 200 --logging-steps 25 --no-wandb \
+        --seed "$SEED" \
+        2>&1 | tee "$RUN_DIR/stage2.log"
+fi
 
 # --- Eval 1: primary (pre-registered) — Recall@10 on title→SID --------------
 # Writes per-sample hit@10 array consumed by aggregate_stats.py paired bootstrap.
+# FA2 + batched decode + early-stop on <|sid_end|> → ~5-10× speedup vs default.
 echo ">>> [$(date +%T)] Evaluating primary Recall@10 (title_to_sid)"
 python3 "$H3_DIR/evaluate_recall_at_10.py" \
     --model-path "$STAGE2_OUT/final" \
     --val-file "$DATA_DIR/semantic_llm_training/Pet_Supplies_conversations_val.parquet" \
     --n-samples "$EVAL_N_SAMPLES" --beam-size 10 --seed 42 \
+    --attn-impl flash_attention_2 --max-new-tokens 16 --batch-size 16 \
     --output "$RUN_DIR/results.json" \
     2>&1 | tee "$RUN_DIR/eval_primary.log"
 
 # --- Eval 2: descriptive — all 11 tasks via evaluate_unified.py -------------
 # Covers Text→SID × 3, Sequential × 3, Co-purchase × 2, SID→Text × 3, WikiText PPL.
+# SID tasks keep N=$EVAL_N_SAMPLES (pre-registered); text tasks use N=200
+# (binomial CI at N=200 is still tight enough for descriptive ranking).
 echo ">>> [$(date +%T)] Evaluating unified (11 tasks + WikiText-2 PPL)"
 python3 "$WORKSPACE/evaluation/evaluate_unified.py" \
     --model-path "$STAGE2_OUT/final" \
     --data-dir "$DATA_DIR" \
     --model-name "arm_${ARM}_seed_${SEED}" \
-    --samples-per-task "$EVAL_N_SAMPLES" --beam-size 10 --seed 42 \
+    --samples-per-task "$EVAL_N_SAMPLES" --samples-per-task-text 200 \
+    --beam-size 10 --seed 42 \
+    --attn-impl flash_attention_2 --max-new-tokens-sid 16 --sid-batch-size 8 \
     --skip-benchmark \
     --output "$RUN_DIR/results_unified.json" \
     2>&1 | tee "$RUN_DIR/eval_unified.log"
@@ -140,6 +154,7 @@ for snap in "$STAGE2_OUT/snapshots"/step-*; do
         --model-path "$snap" \
         --val-file "$DATA_DIR/semantic_llm_training/Pet_Supplies_conversations_val.parquet" \
         --n-samples "$EVAL_N_SAMPLES" --beam-size 10 --seed 42 \
+        --attn-impl flash_attention_2 --max-new-tokens 16 --batch-size 16 \
         --output "$RUN_DIR/learning_curve/step_${step}.json" \
         2>&1 | tee -a "$RUN_DIR/eval_learning_curve.log"
 done

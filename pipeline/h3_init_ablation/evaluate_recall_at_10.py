@@ -37,6 +37,7 @@ log = logging.getLogger("h3-eval")
 _SID_RE = re.compile(
     r"<\|sid_start\|><\|A(\d+)\|><\|B(\d+)\|><\|C(\d+)\|><\|D(\d+)\|><\|sid_end\|>"
 )
+_THINK_BLOCK = "<think>\n\n</think>\n\n"
 
 
 def extract_sid(text: str) -> tuple[int, int, int, int] | None:
@@ -45,14 +46,19 @@ def extract_sid(text: str) -> tuple[int, int, int, int] | None:
 
 
 def build_prompt(tokenizer, conversation: list[dict]) -> str:
-    """Rebuild prompt up to (but excluding) the final assistant turn."""
+    """Rebuild prompt up to (but excluding) the final assistant turn.
+
+    Strips the Qwen3 empty-think prefix to match training-time format
+    (see stage2_full_finetune/train_1.8b.py::_apply_template).
+    """
     prefix = [m for m in conversation if m["role"] != "assistant"]
     try:
-        return tokenizer.apply_chat_template(
+        text = tokenizer.apply_chat_template(
             prefix, tokenize=False, add_generation_prompt=True, enable_thinking=False,
         )
     except TypeError:
-        return tokenizer.apply_chat_template(prefix, tokenize=False, add_generation_prompt=True)
+        text = tokenizer.apply_chat_template(prefix, tokenize=False, add_generation_prompt=True)
+    return text.replace(_THINK_BLOCK, "")
 
 
 def main() -> None:

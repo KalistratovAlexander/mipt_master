@@ -1028,11 +1028,14 @@ def load_eval_data(
     val_df: pl.DataFrame,
     samples_per_task: Optional[int],
     seed: int = 42,
+    samples_per_task_text: Optional[int] = None,
 ) -> Dict[str, List[dict]]:
     """Sample and prepare evaluation data, grouped by task type.
 
-    If samples_per_task is None, tier-specific defaults from TIER_SAMPLES
-    are used (1000 for SID prediction, 500 for text generation).
+    Priority for sample count (per task type):
+      1. samples_per_task_text  — overrides only TEXT_GENERATION_TASKS
+      2. samples_per_task       — overrides all tasks
+      3. TIER_SAMPLES           — tier-specific defaults
     """
     rng = random.Random(seed)
     type_indices = defaultdict(list)
@@ -1043,8 +1046,10 @@ def load_eval_data(
     for task_type, indices in sorted(type_indices.items()):
         if task_type not in ALL_KNOWN_TASKS:
             continue
-        # Determine sample count: explicit override > tier default
-        if samples_per_task is not None:
+        # Determine sample count: text override > global override > tier default
+        if samples_per_task_text is not None and task_type in TEXT_GENERATION_TASKS:
+            n_samples = samples_per_task_text
+        elif samples_per_task is not None:
             n_samples = samples_per_task
         elif task_type in SID_PREDICTION_TASKS:
             n_samples = TIER_SAMPLES["sid_prediction"]
@@ -1104,14 +1109,19 @@ def strip_generated(text: str) -> str:
 
 
 @torch.no_grad()
-def generate_greedy(model, tokenizer, prompt: str, max_new_tokens: int = 64) -> str:
+def generate_greedy(
+    model, tokenizer, prompt: str, max_new_tokens: int = 64,
+    eos_token_id: Optional[int] = None,
+) -> str:
     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
-    out = model.generate(
-        **inputs,
+    gen_kwargs = dict(
         max_new_tokens=max_new_tokens,
         do_sample=False,
         pad_token_id=tokenizer.pad_token_id,
     )
+    if eos_token_id is not None:
+        gen_kwargs["eos_token_id"] = eos_token_id
+    out = model.generate(**inputs, **gen_kwargs)
     generated = out[0][inputs["input_ids"].shape[1]:]
     return tokenizer.decode(generated, skip_special_tokens=False)
 
@@ -1147,20 +1157,23 @@ def generate_beam(
     num_beams: int = 10,
     max_new_tokens: int = 48,
     num_return_sequences: int = 10,
+    eos_token_id: Optional[int] = None,
 ) -> List[str]:
     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
+    gen_kwargs = dict(
+        max_new_tokens=max_new_tokens,
+        num_beams=num_beams,
+        num_return_sequences=min(num_return_sequences, num_beams),
+        do_sample=False,
+        early_stopping=True,
+        pad_token_id=tokenizer.pad_token_id,
+        return_dict_in_generate=True,
+        output_scores=True,
+    )
+    if eos_token_id is not None:
+        gen_kwargs["eos_token_id"] = eos_token_id
     try:
-        out = model.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            num_beams=num_beams,
-            num_return_sequences=min(num_return_sequences, num_beams),
-            do_sample=False,
-            early_stopping=True,
-            pad_token_id=tokenizer.pad_token_id,
-            return_dict_in_generate=True,
-            output_scores=True,
-        )
+        out = model.generate(**inputs, **gen_kwargs)
     except torch.cuda.OutOfMemoryError:
         torch.cuda.empty_cache()
         log.warning(f"OOM in beam search (num_beams={num_beams}), falling back to greedy")
@@ -1176,6 +1189,7 @@ def generate_beam(
     input_len = inputs["input_ids"].shape[1]
     sequences = out.sequences
     seq_scores = getattr(out, "sequences_scores", None)
+    del out  # free GPU memory before next call
 
     order = list(range(sequences.shape[0]))
     if seq_scores is not None:
@@ -1185,6 +1199,57 @@ def generate_beam(
         tokenizer.decode(sequences[i][input_len:], skip_special_tokens=False)
         for i in order
     ]
+
+
+@torch.no_grad()
+def generate_beam_batched(
+    model, tokenizer, prompts: List[str],
+    num_beams: int = 10,
+    max_new_tokens: int = 16,
+    eos_token_id: Optional[int] = None,
+    max_length: int = 1024,
+) -> List[List[str]]:
+    """Batched beam search. Returns List[B] of List[num_beams] decoded continuations.
+
+    Mirrors evaluate_recall_at_10.py's batching pattern. Uses padding_side='left'
+    (required for causal LM batched generation) so `input_ids[:, input_len:]`
+    slices out only the generated suffix for every sample.
+    """
+    old_side = tokenizer.padding_side
+    tokenizer.padding_side = "left"
+    try:
+        enc = tokenizer(
+            prompts, return_tensors="pt",
+            padding=True, truncation=True, max_length=max_length,
+        )
+    finally:
+        tokenizer.padding_side = old_side
+    enc = {k: v.to(model.device) for k, v in enc.items()}
+
+    gen_kwargs = dict(
+        max_new_tokens=max_new_tokens,
+        num_beams=num_beams,
+        num_return_sequences=num_beams,
+        do_sample=False,
+        early_stopping=True,
+        pad_token_id=tokenizer.pad_token_id,
+    )
+    if eos_token_id is not None:
+        gen_kwargs["eos_token_id"] = eos_token_id
+
+    out = model.generate(**enc, **gen_kwargs)
+    B = len(prompts)
+    out = out.reshape(B, num_beams, -1)
+    input_len = enc["input_ids"].shape[1]
+
+    decoded = []
+    for b in range(B):
+        beams = [
+            tokenizer.decode(out[b, k, input_len:], skip_special_tokens=False)
+            for k in range(num_beams)
+        ]
+        decoded.append(beams)
+    return decoded
 
 
 # ============================================================================
@@ -1506,7 +1571,7 @@ def evaluate_model(
     model_name: str = "",
     samples_per_task: Optional[int] = None,
     beam_size: int = 10,
-    max_new_tokens_sid: int = 48,
+    max_new_tokens_sid: int = 16,
     max_new_tokens_text: int = 160,
     seed: int = 42,
     output_file: Optional[str] = None,
@@ -1521,6 +1586,9 @@ def evaluate_model(
     temperature: float = 0.7,        # for sampling mode
     skip_benchmark: bool = False,
     bench_iters: int = 20,
+    sid_batch_size: int = 8,         # batch size for SID task loop (batched beam)
+    verbose_samples: int = 0,        # log first-N prompts/outputs across all SID tasks
+    samples_per_task_text: Optional[int] = None,  # override only TEXT_GENERATION_TASKS
 ) -> dict:
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -1574,6 +1642,12 @@ def evaluate_model(
     if hasattr(model.config, "use_cache"):
         model.config.use_cache = True
 
+    # SID end-of-sequence token: lets generation stop at <|sid_end|> rather than
+    # running all max_new_tokens. Used only for SID_PREDICTION_TASKS below.
+    sid_end_token_id = tokenizer.convert_tokens_to_ids("<|sid_end|>")
+    if sid_end_token_id is None or sid_end_token_id == tokenizer.unk_token_id:
+        sid_end_token_id = None
+
     # ---- Resolve data ----
     data_path = resolve_data_dir(data_dir)
     val_file, sid_file, items_file = resolve_data_files(data_path)
@@ -1590,7 +1664,8 @@ def evaluate_model(
         ppl_result = compute_perplexity(model, tokenizer)
 
     # ---- Load eval data ----
-    task_data = load_eval_data(val_df, samples_per_task, seed)
+    task_data = load_eval_data(val_df, samples_per_task, seed,
+                               samples_per_task_text=samples_per_task_text)
 
     # ---- Performance Benchmark ----
     bench_result = {}
@@ -1650,11 +1725,13 @@ def evaluate_model(
 
     total_time = 0.0
     total_samples = 0
+    # Mutable counter for cross-task verbose logging (list[0] to allow closure-free update)
+    verbose_logged = [0]
 
     # ---- Helper: save intermediate results ----
     def _save_intermediate():
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(out_path, "w") as f:
+        with open(out_path, "w", encoding="utf-8") as f:
             json.dump(results, f, indent=2, ensure_ascii=False)
 
     # ---- Per-task evaluation ----
@@ -1682,55 +1759,100 @@ def evaluate_model(
             intent_match_count = 0
             intent_total = 0
 
-            for i, item in enumerate(tqdm(items, desc=task_type)):
-                prompt = build_prompt(tokenizer, item["prompt_msgs"])
-                gold_sid = parse_sid(item["gold"])
-
-                # Greedy
-                greedy_out = generate_greedy(model, tokenizer, prompt, max_new_tokens=max_new_tokens_sid)
-                pred_sid = parse_sid(greedy_out)
-                greedy_metrics.update(pred_sid, gold_sid)
-                task_error.update(pred_sid, gold_sid)
-                global_error.update(pred_sid, gold_sid)
-                hallucination.check(pred_sid)
-
-                if pred_sid:
-                    diversity.add(sid_tuple_to_token(pred_sid))
-
-                # Intent match
-                query_intent = detect_intent_from_text(item["user_content"])
-                if query_intent and pred_sid:
-                    intent_total += 1
-                    pred_a = int(pred_sid[0]) if pred_sid[0].isdigit() else None
-                    if pred_a is not None and a_level_category.get(pred_a) == query_intent:
-                        intent_match_count += 1
-
-                qualitative.add_sid(
-                    task_type, item["user_content"][:500], item["gold"],
-                    strip_generated(greedy_out), gold_sid, pred_sid,
-                )
-
-                # Multi-candidate: beam search or sampling
-                if decoding == "sampling":
+            if decoding == "sampling":
+                # Sampling path: keep per-sample (rare, not on critical path)
+                for i, item in enumerate(tqdm(items, desc=task_type)):
+                    prompt = build_prompt(tokenizer, item["prompt_msgs"])
+                    gold_sid = parse_sid(item["gold"])
+                    greedy_out = generate_greedy(
+                        model, tokenizer, prompt,
+                        max_new_tokens=max_new_tokens_sid,
+                        eos_token_id=sid_end_token_id,
+                    )
+                    pred_sid = parse_sid(greedy_out)
+                    greedy_metrics.update(pred_sid, gold_sid)
+                    task_error.update(pred_sid, gold_sid)
+                    global_error.update(pred_sid, gold_sid)
+                    hallucination.check(pred_sid)
+                    if pred_sid:
+                        diversity.add(sid_tuple_to_token(pred_sid))
+                    query_intent = detect_intent_from_text(item["user_content"])
+                    if query_intent and pred_sid:
+                        intent_total += 1
+                        pred_a = int(pred_sid[0]) if pred_sid[0].isdigit() else None
+                        if pred_a is not None and a_level_category.get(pred_a) == query_intent:
+                            intent_match_count += 1
+                    qualitative.add_sid(
+                        task_type, item["user_content"][:500], item["gold"],
+                        strip_generated(greedy_out), gold_sid, pred_sid,
+                    )
                     sampling_outputs = generate_sampling(
                         model, tokenizer, prompt,
                         n_generations=n_generations,
                         max_new_tokens=max_new_tokens_sid,
                         temperature=temperature,
                     )
-                    cand_sids = [parse_sid(out) for out in sampling_outputs]
+                    cand_sids = [parse_sid(o) for o in sampling_outputs]
                     cand_sids = [s for s in cand_sids if s is not None]
                     beam_metrics.update(cand_sids, gold_sid)
-                elif beam_size > 1:
-                    beam_outputs = generate_beam(
-                        model, tokenizer, prompt,
+            else:
+                # Batched beam path: one generate per batch, beam[0] = top-1 pred.
+                # Saves the redundant greedy forward pass and ~3-5× on GPU throughput.
+                n_batches = (len(items) + sid_batch_size - 1) // sid_batch_size
+                for b_start in tqdm(
+                    range(0, len(items), sid_batch_size),
+                    total=n_batches, desc=task_type,
+                ):
+                    batch = items[b_start : b_start + sid_batch_size]
+                    prompts = [build_prompt(tokenizer, it["prompt_msgs"]) for it in batch]
+                    batch_beams = generate_beam_batched(
+                        model, tokenizer, prompts,
                         num_beams=beam_size,
                         max_new_tokens=max_new_tokens_sid,
-                        num_return_sequences=beam_size,
+                        eos_token_id=sid_end_token_id,
                     )
-                    beam_sids = [parse_sid(out) for out in beam_outputs]
-                    beam_sids = [s for s in beam_sids if s is not None]
-                    beam_metrics.update(beam_sids, gold_sid)
+                    for i_in_batch, item in enumerate(batch):
+                        beams = batch_beams[i_in_batch]
+                        gold_sid = parse_sid(item["gold"])
+
+                        # Top-1 = highest-scoring beam (replaces greedy pass).
+                        top1_out = beams[0]
+                        pred_sid = parse_sid(top1_out)
+                        greedy_metrics.update(pred_sid, gold_sid)
+                        task_error.update(pred_sid, gold_sid)
+                        global_error.update(pred_sid, gold_sid)
+                        hallucination.check(pred_sid)
+                        if pred_sid:
+                            diversity.add(sid_tuple_to_token(pred_sid))
+
+                        query_intent = detect_intent_from_text(item["user_content"])
+                        if query_intent and pred_sid:
+                            intent_total += 1
+                            pred_a = int(pred_sid[0]) if pred_sid[0].isdigit() else None
+                            if pred_a is not None and a_level_category.get(pred_a) == query_intent:
+                                intent_match_count += 1
+
+                        qualitative.add_sid(
+                            task_type, item["user_content"][:500], item["gold"],
+                            strip_generated(top1_out), gold_sid, pred_sid,
+                        )
+
+                        beam_sids = [parse_sid(bt) for bt in beams]
+                        beam_sids = [s for s in beam_sids if s is not None]
+                        beam_metrics.update(beam_sids, gold_sid)
+
+                        # Verbose logging across all SID tasks, up to verbose_samples total.
+                        if verbose_samples > 0 and verbose_logged[0] < verbose_samples:
+                            verbose_logged[0] += 1
+                            log.info(
+                                "[verbose %d/%d] task=%s\n  prompt_tail: ...%s\n  gold: %s\n  top1_raw: %s\n  parsed_pred: %s\n  beam_top5: %s",
+                                verbose_logged[0], verbose_samples, task_type,
+                                prompts[i_in_batch][-160:].replace("\n", " "),
+                                str(item["gold"])[:120],
+                                strip_generated(top1_out)[:120],
+                                pred_sid,
+                                [parse_sid(bt) for bt in beams[:5]],
+                            )
 
             elapsed = time.time() - t0
             total_time += elapsed
@@ -1942,13 +2064,13 @@ def evaluate_model(
         out_path = Path(model_path) / "eval_unified_results.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
-    with open(out_path, "w") as f:
+    with open(out_path, "w", encoding="utf-8") as f:
         json.dump(results, f, indent=2, ensure_ascii=False)
     log.info(f"\nResults saved to {out_path}")
 
     # Save qualitative examples
     examples_path = out_path.with_name(out_path.stem + "_examples.json")
-    with open(examples_path, "w") as f:
+    with open(examples_path, "w", encoding="utf-8") as f:
         json.dump(qualitative.to_dict(), f, indent=2, ensure_ascii=False)
     log.info(f"Examples saved to {examples_path}")
 
@@ -1969,7 +2091,8 @@ if __name__ == "__main__":
     p.add_argument("--samples-per-task", type=int, default=None,
                    help="Override samples per task (default: tier-aware 1000/500)")
     p.add_argument("--beam-size", type=int, default=10)
-    p.add_argument("--max-new-tokens-sid", type=int, default=48)
+    p.add_argument("--max-new-tokens-sid", type=int, default=16,
+                   help="SID tokens need ~6 (start + 4 + end); 16 gives margin and stops early via eos.")
     p.add_argument("--max-new-tokens-text", type=int, default=160)
     p.add_argument("--attn-impl", default="sdpa", choices=["sdpa", "flash_attention_2", "eager"])
     p.add_argument("--output", default=None, help="Output JSON path")
@@ -1991,6 +2114,13 @@ if __name__ == "__main__":
                    help="Skip performance benchmarking (TTFT, TPS, E2E, GPU memory)")
     p.add_argument("--bench-iters", type=int, default=20,
                    help="Number of iterations for performance benchmark (default: 20)")
+    p.add_argument("--sid-batch-size", type=int, default=8,
+                   help="Batch size for SID task loop (batched beam search). Default: 8.")
+    p.add_argument("--verbose-samples", type=int, default=0,
+                   help="Log first N prompts+outputs across all SID tasks for sanity check. Default: 0 (off).")
+    p.add_argument("--samples-per-task-text", type=int, default=None,
+                   help="Override sample count for TEXT_GENERATION_TASKS only (sid_to_title, sid_to_category, sid_to_reasoning). "
+                        "Does not affect SID prediction tasks. Useful when text tasks are slower and you want fewer samples there.")
 
     args = p.parse_args()
 
@@ -2015,4 +2145,7 @@ if __name__ == "__main__":
         temperature=args.temperature,
         skip_benchmark=args.skip_benchmark,
         bench_iters=args.bench_iters,
+        sid_batch_size=args.sid_batch_size,
+        verbose_samples=args.verbose_samples,
+        samples_per_task_text=args.samples_per_task_text,
     )
