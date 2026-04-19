@@ -1,6 +1,12 @@
 #!/bin/bash
 set -euo pipefail
 
+# Reduce CUDA memory fragmentation across sequential arms — without this,
+# arm_A_seed_43 Stage 1 hit OOM at step 77/2000 on a freshly-freed H100
+# (vocab projection (64, s, 152696) fp32 = ~20GiB transient allocation).
+# Arm-symmetric: applied identically to all 12 (arm, seed) combos.
+export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
+
 # H3 init-ablation runner — one (arm, seed) combo.
 #
 # Assumes layout produced by pack_h3.sh:
