@@ -1,6 +1,6 @@
 # Qwen3 Semantic ID Training — shared two-stage trainer (vast.ai)
 
-> **Примечание об именах файлов.** Файлы `train_1.8b.py` сохраняют историческое имя: при создании инфраструктуры предполагалась модель `Qwen3-1.8B`, но в dense-семействе Qwen3 такой модели нет ([Qwen3 Technical Report, arXiv 2505.09388](https://arxiv.org/abs/2505.09388); [карточка Qwen3-1.7B](https://huggingface.co/Qwen/Qwen3-1.7B); доступны 0.6B, 1.7B, 4B, 8B, 14B, 32B). Конкретный размер задаётся скриптами `run_<size>.sh`, а единый тренажёр `train_1.8b.py` параметризуется размером модели.
+> **Об именах файлов.** Единый тренер `train_1.8b.py` параметризуется размером модели; конкретный размер задаётся скриптами `run_<size>.sh`, имя файла не привязано к одному размеру.
 
 Two-stage pipeline for training Qwen3 (0.6B / 1.7B / 4B / 8B) with semantic IDs for product recommendations. This shared trainer is used both for **H1** (the model-size sweep, via `run_<size>.sh`) and for **H2** (the embedding-init ablation in `../experiments/h2_init_ablation`, which packages this trainer via `pack.sh`).
 
