@@ -128,7 +128,7 @@ def _init_new_rows(weight: torch.Tensor, n_new: int) -> None:
 
 
 def _init_h2(model, n_new: int, h2: dict) -> None:
-    """H2 ablation init. Dispatches to pipeline/h2_init_ablation/init_strategies."""
+    """H2 ablation init. Dispatches to pipeline/experiments/h2_init_ablation/init_strategies."""
     import sys
     sys.path.insert(0, h2["module_path"])
     from init_strategies import apply_init_to_model  # noqa: E402
@@ -325,7 +325,7 @@ def main():
     p.add_argument("--init-strategy", choices=["original", "A", "B", "C", "D"],
                    default="original",
                    help="Embedding init for new SID tokens. 'original' = legacy diag-std; "
-                        "A/B/C/D dispatch to pipeline/h2_init_ablation/init_strategies.")
+                        "A/B/C/D dispatch to pipeline/experiments/h2_init_ablation/init_strategies.")
     p.add_argument("--init-seed", type=int, default=None,
                    help="Seed for H2 init sampling. Defaults to --seed when omitted.")
     p.add_argument("--target-frobenius-ctrl", type=float, default=None,
@@ -339,7 +339,7 @@ def main():
     p.add_argument("--title-map-path", default=None,
                    help="Path to title_token_ids_per_sid.json (required for arm C).")
     p.add_argument("--h2-module-path", default=None,
-                   help="Path to pipeline/h2_init_ablation dir (auto-detected from script location if omitted).")
+                   help="Path to pipeline/experiments/h2_init_ablation dir (auto-detected from script location if omitted).")
     args = p.parse_args()
 
     h2 = None
@@ -348,7 +348,7 @@ def main():
             p.error("--target-frobenius-ctrl and --target-frobenius-sid are required "
                     "when --init-strategy != original")
         module_path = args.h2_module_path or str(
-            Path(__file__).resolve().parents[2] / "h2_init_ablation"
+            Path(__file__).resolve().parents[2] / "experiments" / "h2_init_ablation"
         )
         if not Path(module_path).exists():
             p.error(f"H2 module dir not found: {module_path}; pass --h2-module-path")

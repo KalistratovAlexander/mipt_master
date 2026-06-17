@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """One-shot pre-registration artifacts for H2 ablation.
 
-Produces three files under artifacts/ that must exist before any run_h2.sh:
+Produces three files under artifacts/ that must exist before any run.sh:
   1. h2_init_scales.json — target Frobenius norm for scale-matched init.
   2. codebook.pt         — (768 × 32) RQ-VAE codebook for arm D.
   3. title_token_ids_per_sid.json — per-SID title-BPE multiset for arm C.

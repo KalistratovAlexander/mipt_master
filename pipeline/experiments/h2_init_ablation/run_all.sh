@@ -6,7 +6,7 @@ set -euo pipefail
 # Skip-if-done: a run is skipped when BOTH results.json and results_unified.json
 # already exist for that (arm, seed). Delete either file to re-run.
 #
-# Respects DRY_RUN env var (passed through to run_h2.sh). Example:
+# Respects DRY_RUN env var (passed through to run.sh). Example:
 #   DRY_RUN=1 bash run_all.sh   # ~10 min smoke over all 12
 #   bash run_all.sh             # full run (≈ full-scale training budget)
 
@@ -32,7 +32,7 @@ for arm in "${ARMS[@]}"; do
             continue
         fi
         echo ">>> [$N/$TOTAL] arm=$arm seed=$sd — running"
-        bash "$H2_DIR/run_h2.sh" "$arm" "$sd"
+        bash "$H2_DIR/run.sh" "$arm" "$sd"
     done
 done
 

@@ -4,13 +4,13 @@ set -euo pipefail
 # Pack vast.ai training package for Qwen3 small models (0.6B / 1.8B / 4B)
 # Creates vast_<MODEL>_package.tar.gz with the correct /workspace structure
 #
-# Usage: cd mipt_master && bash pipeline/fine_tune/pack.sh [0.6b|1.8b|4b]
+# Usage: cd mipt_master && bash pipeline/experiments/h1_model_scale/pack_train.sh [0.6b|1.8b|4b|8b]
 # Default: 1.8b
 
 MODEL="${1:-1.8b}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 OUT="$PROJECT_DIR/vast_${MODEL}_package.tar.gz"
 
 case "$MODEL" in
@@ -37,17 +37,17 @@ cp "$DATA_DIR/Pet_Supplies_conversations_val.parquet" "$TMP/data/"
 
 echo "  Copying Stage 1..."
 mkdir -p "$TMP/stage1"
-cp "$SCRIPT_DIR/stage1_vocab_expansion/train_1.8b.py" "$TMP/stage1/"
-cp "$SCRIPT_DIR/stage1_vocab_expansion/$RUN_S1" "$TMP/stage1/run.sh"
+cp "$PROJECT_DIR/pipeline/fine_tune/stage1_vocab_expansion/train_1.8b.py" "$TMP/stage1/"
+cp "$SCRIPT_DIR/stage1/$RUN_S1" "$TMP/stage1/run.sh"
 
 echo "  Copying Stage 2..."
 mkdir -p "$TMP/stage2"
-cp "$SCRIPT_DIR/stage2_full_finetune/train_1.8b.py" "$TMP/stage2/"
-cp "$SCRIPT_DIR/stage2_full_finetune/$RUN_S2" "$TMP/stage2/run.sh"
+cp "$PROJECT_DIR/pipeline/fine_tune/stage2_full_finetune/train_1.8b.py" "$TMP/stage2/"
+cp "$SCRIPT_DIR/stage2/$RUN_S2" "$TMP/stage2/run.sh"
 
 echo "  Copying setup and smoke test..."
-cp "$SCRIPT_DIR/setup.sh" "$TMP/"
-cp "$SCRIPT_DIR/run_smoke.sh" "$TMP/"
+cp "$PROJECT_DIR/pipeline/fine_tune/setup.sh" "$TMP/"
+cp "$PROJECT_DIR/pipeline/fine_tune/run_smoke.sh" "$TMP/"
 
 echo "  Compressing..."
 tar -czf "$OUT" -C "$TMP" .

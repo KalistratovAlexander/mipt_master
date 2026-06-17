@@ -15,16 +15,11 @@ All other parameters are frozen (~0.3% trainable).
 
 ## Run on vast.ai
 
-```bash
-# Upload to server
-scp -P <PORT> run_1.8b.sh train_1.8b.py root@<HOST>:/workspace/stage1/
-scp -rP <PORT> data/ root@<HOST>:/workspace/stage1/data/
+Per-size configs live in `../../experiments/h1_model_scale/stage1/run_<size>.sh`; the deployable package is built by `pack_train.sh` (it renames the chosen config to `stage1/run.sh`):
 
-# Run
-ssh -p <PORT> root@<HOST>
-cd /workspace/stage1
-nohup bash run_1.8b.sh &
-tail -f train_1.8b.log
+```bash
+bash pipeline/experiments/h1_model_scale/pack_train.sh 1.8b   # 0.6b | 1.8b | 4b | 8b
+# on server:  tar xf vast_<size>_package.tar.gz && bash run_smoke.sh && bash stage1/run.sh
 ```
 
 ## Defaults
@@ -64,7 +59,7 @@ python train_1.8b.py \
 ## Resume if crashed
 
 ```bash
-bash run_1.8b.sh --resume
+bash run.sh --resume
 ```
 
 ## GPU requirements
@@ -76,4 +71,4 @@ bash run_1.8b.sh --resume
 | RTX 4090 24GB | 32 | ~1-2 hours |
 | RTX 3090 24GB | 32 | ~2-3 hours |
 
-For smaller GPUs, reduce batch: `bash run_1.8b.sh --batch-size 16 --grad-accum 4`
+For smaller GPUs, reduce batch: `bash run.sh --batch-size 16 --grad-accum 4`

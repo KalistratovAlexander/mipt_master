@@ -19,11 +19,10 @@ import time
 from pathlib import Path
 from typing import Optional
 
-import itertools
 
 import torch
 import datasets
-from datasets import Dataset, concatenate_datasets, load_dataset
+from datasets import Dataset, load_dataset
 
 datasets.disable_caching()
 from transformers import (
@@ -344,155 +343,6 @@ def load_reco_dataset(
 
 
 # ---------------------------------------------------------------------------
-# General data mixing (reasoning SFT datasets)
-# ---------------------------------------------------------------------------
-
-# Supported reasoning datasets and their field mappings
-_REASONING_SOURCES = {
-    "nvidia/OpenMathReasoning": {
-        "split": "cot",           # chain-of-thought solutions
-        "user_field": "problem",
-        "assistant_field": "generated_solution",
-    },
-    "nvidia/OpenCodeReasoning": {
-        "config": "split_0",       # HF requires explicit config name
-        "split": "split_0",        # split name matches config name
-        "user_field": "input",
-        "assistant_field": "output",
-    },
-    "glaiveai/reasoning-v1-20m": {
-        "split": "train",
-        "user_field": "prompt",
-        "assistant_field": "response",
-    },
-}
-
-# Default proportions within the general mix (math-heavy, following OpenOneRec)
-_DEFAULT_MIX_WEIGHTS = {
-    "nvidia/OpenMathReasoning": 0.60,
-    "nvidia/OpenCodeReasoning": 0.20,
-    "glaiveai/reasoning-v1-20m": 0.20,
-}
-
-_THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
-
-
-def _strip_think(text: str) -> str:
-    """Remove <think>...</think> reasoning traces from responses."""
-    return _THINK_RE.sub("", text).strip()
-
-
-def _to_conversation(user_text: str, assistant_text: str) -> list[dict]:
-    """Convert a Q&A pair to chat format compatible with apply_chat_template."""
-    return [
-        {"role": "user", "content": user_text},
-        {"role": "assistant", "content": _strip_think(assistant_text)},
-    ]
-
-
-def load_general_dataset(
-    tokenizer, template_ids: list[int], im_end_id: int,
-    max_length: int, n_samples: int, seed: int,
-    sources: Optional[dict[str, float]] = None,
-) -> Dataset:
-    """Load reasoning SFT datasets, convert to conversations, tokenize with instruction masking.
-
-    Sources: dict of {hf_dataset_name: weight}. Weights are relative (normalized to sum=1).
-    Uses the same instruction masking as SID data for consistent loss computation.
-    """
-    sources = sources or _DEFAULT_MIX_WEIGHTS
-    total_weight = sum(sources.values())
-
-    all_rows = []
-    for source_name, weight in sources.items():
-        n = int(n_samples * weight / total_weight)
-        if n == 0:
-            continue
-
-        cfg = _REASONING_SOURCES.get(source_name)
-        if cfg is None:
-            log.warning(f"Unknown source {source_name!r}, skipping")
-            continue
-
-        hf_config = cfg.get("config")
-        log.info(f"Loading {source_name!r} (n={n:,}, split={cfg['split']}, config={hf_config})")
-        load_kw = {"split": cfg["split"], "streaming": True}
-        if hf_config:
-            load_kw["name"] = hf_config
-        ds = load_dataset(source_name, **load_kw)
-        ds = ds.shuffle(seed=seed, buffer_size=10_000)
-
-        rows = []
-        for ex in itertools.islice(ds, n):
-            user = ex.get(cfg["user_field"], "")
-            assistant = ex.get(cfg["assistant_field"], "")
-            if user and assistant:
-                rows.append({"conversations": _to_conversation(user, assistant)})
-
-        log.info(f"  Collected {len(rows):,} examples from {source_name}")
-        all_rows.extend(rows)
-
-    if not all_rows:
-        log.warning("No general data loaded")
-        return Dataset.from_dict({"input_ids": [], "labels": [], "attention_mask": []})
-
-    log.info(f"General data total: {len(all_rows):,} conversations")
-    ds = Dataset.from_list(all_rows)
-
-    def process(batch):
-        texts = [_apply_template(tokenizer, conv) for conv in batch["conversations"]]
-        enc = tokenizer(texts, truncation=True, max_length=max_length, padding=False)
-        enc["labels"] = [
-            _apply_chat_mask(ids, template_ids, im_end_id)
-            for ids in enc["input_ids"]
-        ]
-        return enc
-
-    ds = ds.map(process, batched=True, remove_columns=ds.column_names, num_proc=4,
-                desc="Tokenizing general reasoning data")
-    log.info(f"General dataset tokenized: {len(ds):,} examples")
-    return ds
-
-
-def mix_datasets(
-    reco_ds: Dataset, general_fraction: float,
-    tokenizer, template_ids: list[int], im_end_id: int,
-    max_length: int, seed: int,
-    sources: Optional[dict[str, float]] = None,
-) -> Dataset:
-    """Mix SID conversations with reasoning SFT data.
-
-    Args:
-        reco_ds: SID conversation dataset (already tokenized).
-        general_fraction: Fraction of general data in total mix (e.g. 0.25).
-            0 = no mixing. SID data count stays fixed, general is added on top.
-        tokenizer: For tokenizing general data.
-        template_ids, im_end_id: For instruction masking of general data.
-        max_length: Max sequence length.
-        seed: Random seed.
-        sources: Dict of {hf_dataset: weight}. Default: math 60%, code 20%, reasoning 20%.
-    """
-    if general_fraction <= 0:
-        return reco_ds
-
-    n_reco = len(reco_ds)
-    n_general = int(n_reco * general_fraction / (1.0 - general_fraction))
-
-    general_ds = load_general_dataset(
-        tokenizer, template_ids, im_end_id,
-        max_length, n_general, seed, sources,
-    )
-
-    mixed = concatenate_datasets([reco_ds, general_ds]).shuffle(seed=seed)
-    log.info(
-        f"Data mix: {n_reco:,} SID ({100*n_reco/len(mixed):.0f}%) + "
-        f"{len(general_ds):,} reasoning ({100*len(general_ds)/len(mixed):.0f}%) "
-        f"= {len(mixed):,} total"
-    )
-    return mixed
-
-
-# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -518,9 +368,6 @@ def main():
     p.add_argument("--weight-decay", type=float, default=0.01)
     p.add_argument("--seed", type=int, default=42)
 
-    # General data mixing (reasoning SFT datasets)
-    p.add_argument("--general-fraction", type=float, default=0.0,
-                   help="Fraction of general reasoning data in mix (0 = no mixing, 0.25 = 25%%)")
 
     p.add_argument("--packing", action="store_true")
     p.add_argument("--gradient-checkpointing", action="store_true",
@@ -566,11 +413,6 @@ def main():
     train_ds = load_reco_dataset(
         args.train_file, tokenizer, template_ids, im_end_id,
         args.max_train_samples, args.max_seq_length, args.seed,
-    )
-    train_ds = mix_datasets(
-        train_ds, args.general_fraction,
-        tokenizer, template_ids, im_end_id,
-        args.max_seq_length, args.seed,
     )
     if args.packing:
         train_ds = pack_sequences(train_ds, args.max_seq_length, tokenizer.pad_token_id)
@@ -682,7 +524,6 @@ def main():
         "max_seq_length": args.max_seq_length,
         "train_samples": len(train_ds),
         "packing": args.packing,
-        "general_fraction": args.general_fraction,
         "final_loss": result.metrics.get("train_loss"),
         "runtime_sec": result.metrics.get("train_runtime"),
     }, indent=2))

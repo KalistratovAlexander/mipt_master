@@ -4,7 +4,7 @@ set -euo pipefail
 # Pack vast.ai evaluation package for H1 evaluation.
 # Includes: eval scripts + all required data files (~180MB compressed).
 #
-# Usage: cd mipt_master && bash pipeline/evaluation/pack_eval.sh
+# Usage: cd mipt_master && bash pipeline/experiments/h1_model_scale/pack_eval.sh
 #
 # Then on eval machine (H100 80GB, 100GB+ disk):
 #   cd /workspace && tar xf vast_eval_package.tar.gz
@@ -12,7 +12,7 @@ set -euo pipefail
 #   bash pipeline/evaluation/run_h1.sh
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 OUT="$PROJECT_DIR/vast_eval_package.tar.gz"
 
 echo ">>> Building H1 eval package..."
@@ -29,7 +29,7 @@ trap "rm -rf $TMP" EXIT
 
 echo "  Copying eval scripts..."
 mkdir -p "$TMP/pipeline/evaluation"
-cp "$SCRIPT_DIR/evaluate_unified.py" "$TMP/pipeline/evaluation/"
+cp "$PROJECT_DIR/pipeline/evaluation/evaluate_unified.py" "$TMP/pipeline/evaluation/"
 cp "$SCRIPT_DIR/stat_tests.py"       "$TMP/pipeline/evaluation/"
 cp "$SCRIPT_DIR/run_h1.sh"           "$TMP/pipeline/evaluation/"
 cp "$SCRIPT_DIR/setup_eval.sh"       "$TMP/pipeline/evaluation/"

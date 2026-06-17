@@ -27,19 +27,11 @@ Same as Stage 1: 4.7M rows, 23 task types, 63K unique SIDs.
 
 ## Run on vast.ai
 
+Built and launched via the H1 experiment package (`../../experiments/h1_model_scale/pack_train.sh`). Stage 2 starts from the Stage 1 output automatically:
+
 ```bash
-# 1. Upload
-scp -P <PORT> run_1.8b.sh train_1.8b.py root@<HOST>:/workspace/stage2/
-scp -rP <PORT> data/ root@<HOST>:/workspace/stage2/data/
-
-# 2. Copy Stage 1 model from Stage 1 output
-ssh -p <PORT> root@<HOST>
-cp -r /workspace/stage1/output/stage1_1.8b/final /workspace/stage2/stage1_model
-
-# 3. Run
-cd /workspace/stage2
-nohup bash run_1.8b.sh &
-tail -f train_1.8b.log
+# on server, after Stage 1 finished:
+bash stage2/run.sh
 ```
 
 ## Defaults
@@ -68,7 +60,7 @@ output/final/
 ## Resume if crashed
 
 ```bash
-bash run_1.8b.sh --resume
+bash run.sh --resume
 ```
 
 ## GPU requirements & time estimates
@@ -79,7 +71,7 @@ bash run_1.8b.sh --resume
 | A100 40GB | ~2-3 hours |
 | RTX 4090 24GB | ~4-6 hours |
 
-For quick test: `bash run_1.8b.sh --max-train-samples 10000 --epochs 1`
+For quick test: `bash run.sh --max-train-samples 10000 --epochs 1`
 
 To reduce training time, downsample copurchase tasks (59% of data):
-`bash run_1.8b.sh --max-train-samples 1200000`
+`bash run.sh --max-train-samples 1200000`

@@ -64,11 +64,13 @@ pipeline/                          ML-пайплайн
   prepare_semantic_ids.ipynb       9. Назначение уровня D, формирование SID-токенов
   prepare_data_for_llm.ipynb      10. Генерация 4,97 млн обучающих диалогов
   rqvae/                           RQ-VAE: модель, обучение, оценка
-  evaluation/                      H1: единый оценщик, статистические тесты, run-скрипты
-  fine_tune/                       Общий двухэтапный тренер Qwen3 (H1: размеры 0.6B/1.7B/4B/8B)
+  fine_tune/                       Общий двухэтапный тренер Qwen3 (stage 1 + stage 2)
     stage1_vocab_expansion/        Stage 1: обучение только эмбеддингов
     stage2_full_finetune/          Stage 2: полное дообучение
-  h2_init_ablation/                H2: абляция инициализации (4 способа × 3 seed; переиспользует ../fine_tune)
+  evaluation/                      Общий оценщик (evaluate_unified.py)
+  experiments/                     Эксперименты по двум гипотезам
+    h1_model_scale/                H1 — эффект масштаба (0.6B/1.7B/4B/8B): конфиги, pack/run, оценка, статтесты
+    h2_init_ablation/              H2 — инициализация эмбеддингов (4 способа × 3 seed): init-код, артефакты, pack/run, диагностики
 
 models/                            Обученные модели (не отслеживаются в git, доступны на HuggingFace)
   rqvae/                           Чекпоинт RQ-VAE — huggingface.co/kalistratov/rqvae-pet-supplies
@@ -100,21 +102,23 @@ pip install torch --index-url https://download.pytorch.org/whl/cu121
 Скрипты обучения предназначены для развёртывания на [vast.ai](https://vast.ai) с GPU NVIDIA H100 80GB.
 
 ```bash
-# Сборка пакета для развёртывания (масштаб: 0.6b | 1.8b | 4b | 8b)
-bash pipeline/fine_tune/pack.sh 8b
-
-# Загрузка на удалённый GPU-инстанс
+# H1 (эффект масштаба) — собрать пакет для размера и развернуть на vast.ai
+bash pipeline/experiments/h1_model_scale/pack_train.sh 8b   # размер: 0.6b | 1.8b | 4b | 8b
 scp vast_8b_package.tar.gz root@<HOST>:/workspace/
+#   на сервере:
+cd /workspace && tar xf vast_8b_package.tar.gz && export HF_TOKEN=hf_...
+bash run_smoke.sh && bash stage1/run.sh && bash stage2/run.sh
 
-# На удалённом инстансе
-cd /workspace && tar xf vast_8b_package.tar.gz
-export HF_TOKEN=hf_...
-bash run_smoke.sh     # smoke-тест (~10 мин)
-bash stage1/run.sh    # Stage 1: ~1 час
-bash stage2/run.sh    # Stage 2: ~10 часов
+# H2 (инициализация эмбеддингов) — один пакет на всю сетку 4×3
+bash pipeline/experiments/h2_init_ablation/pack.sh
+scp h2_vast_package.tar.gz root@<HOST>:/workspace/
+#   на сервере:
+cd /workspace && tar xf h2_vast_package.tar.gz && export HF_TOKEN=hf_...
+python3 h2_init_ablation/precompute_all.py    # pre-reg артефакты
+bash h2_init_ablation/run_all.sh              # 12 прогонов + диагностики + агрегация
 ```
 
-Остальные масштабы собираются той же командой с аргументом `0.6b` / `1.8b` / `4b`.
+Оценка H1 после обучения: `bash pipeline/experiments/h1_model_scale/pack_eval.sh` → на сервере `bash pipeline/evaluation/run_h1.sh`.
 
 ### Оценка
 

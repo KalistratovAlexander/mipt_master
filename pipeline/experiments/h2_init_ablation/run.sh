@@ -9,12 +9,12 @@ export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:T
 
 # H2 init-ablation runner — one (arm, seed) combo.
 #
-# Assumes layout produced by pack_h2.sh:
+# Assumes layout produced by pack.sh:
 #   /workspace/
 #     data/  stage1/  stage2/  h2_init_ablation/  setup.sh
 #
 # Usage (on vast.ai):
-#   bash /workspace/h2_init_ablation/run_h2.sh <ARM> <SEED>
+#   bash /workspace/h2_init_ablation/run.sh <ARM> <SEED>
 #
 # Pre-reqs:
 #   1. artifacts/h2_init_scales.json has non-null target_frobenius_ctrl AND

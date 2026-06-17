@@ -8,13 +8,13 @@ set -euo pipefail
 #   VAST_HOST=... VAST_PORT=... bash pipeline/fetch_results.sh
 #
 # EXPERIMENT defaults to h2_init_ablation (must match remote /workspace/<EXPERIMENT>
-# and local pipeline/<EXPERIMENT>).
+# and local pipeline/experiments/<EXPERIMENT>).
 
 HOST="${1:-${VAST_HOST:?host required: arg1 or VAST_HOST}}"
 PORT="${2:-${VAST_PORT:?port required: arg2 or VAST_PORT}}"
 EXPERIMENT="${3:-h2_init_ablation}"
 
-LOCAL_DIR="$(cd "$(dirname "$0")" && pwd)/$EXPERIMENT"
+LOCAL_DIR="$(cd "$(dirname "$0")" && pwd)/experiments/$EXPERIMENT"
 REMOTE="root@$HOST:/workspace/$EXPERIMENT"
 
 echo ">>> Pulling $EXPERIMENT from $HOST:$PORT"

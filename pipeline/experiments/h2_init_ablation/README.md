@@ -37,14 +37,14 @@ h2_init_ablation/
 ├── evaluate_recall_at_10.py    (primary: title_to_sid × 1000, per-sample hit@10)
 ├── transversal_diagnostics.py  (post-hoc: cos + CKA + eff rank + RSA)
 ├── aggregate_stats.py          (Friedman + paired bootstrap + descriptive tables)
-├── run_h2.sh                   (entry: bash run_h2.sh <ARM> <SEED>; DRY_RUN=1 для smoke)
+├── run.sh                   (entry: bash run.sh <ARM> <SEED>; DRY_RUN=1 для smoke)
 ├── run_all.sh                  (12-run orchestrator + transversal + aggregate; skip-if-done)
-├── pack_h2.sh                  (build tar.gz для vast.ai)
+├── pack.sh                  (build tar.gz для vast.ai)
 ├── artifacts/                  (pre-registered constants + arm-specific inputs)
 ├── runs/                       (per-arm×seed outputs; gitignored)
 └── results/                    (h2_summary.json, transversal.json; gitignored)
 ```
 
-Shared `evaluate_unified.py` из `../evaluation/` — вызывается внутри `run_h2.sh`
+Shared `evaluate_unified.py` из `../../evaluation/` — вызывается внутри `run.sh`
 для descriptive 11-task eval + WikiText-2 PPL.
-Pull с vast.ai: `bash ../fetch_results.sh <HOST> <PORT>`.
+Pull с vast.ai: `bash ../../fetch_results.sh <HOST> <PORT>`.

@@ -4,10 +4,10 @@ set -euo pipefail
 # Pack vast.ai training package for H2 init-ablation (Qwen3-0.6B)
 # Creates h2_vast_package.tar.gz with the correct /workspace structure
 #
-# Usage: bash pipeline/h2_init_ablation/pack_h2.sh
+# Usage: bash pipeline/experiments/h2_init_ablation/pack.sh
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
+PROJECT_DIR="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 FT_DIR="$PROJECT_DIR/pipeline/fine_tune"
 EVAL_DIR="$PROJECT_DIR/pipeline/evaluation"
 OUT="$PROJECT_DIR/h2_vast_package.tar.gz"
@@ -73,5 +73,5 @@ echo ""
 echo "Then on server:"
 echo "  cd /workspace && tar xf h2_vast_package.tar.gz"
 echo "  cd /workspace && python3 h2_init_ablation/precompute_all.py  # one-shot pre-reg"
-echo "  DRY_RUN=1 bash h2_init_ablation/run_h2.sh A 42   # smoke test (~10 min)"
+echo "  DRY_RUN=1 bash h2_init_ablation/run.sh A 42   # smoke test (~10 min)"
 echo "  bash h2_init_ablation/run_all.sh                 # 12 runs + diagnostics"
