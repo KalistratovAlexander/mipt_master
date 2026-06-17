@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Stage 1: Qwen3-1.8B vocab expansion
+# Stage 1: Qwen3-1.7B vocab expansion
 # Adds 1027 SID tokens, trains only embeddings (~0.3% of params)
 #
 # Usage:

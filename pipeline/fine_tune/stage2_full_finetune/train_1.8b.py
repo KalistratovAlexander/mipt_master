@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage 2: Full fine-tuning Qwen3-1.8B with Semantic IDs.
+"""Stage 2: Full fine-tuning Qwen3 with Semantic IDs.
 
 Unsloth (FastLanguageModel) for model loading + vanilla Trainer for training.
 Custom instruction masking, sequence packing, SID eval callback.
@@ -347,7 +347,7 @@ def load_reco_dataset(
 # ---------------------------------------------------------------------------
 
 def main():
-    p = argparse.ArgumentParser(description="Stage 2: Full fine-tuning (Qwen3-1.8B)")
+    p = argparse.ArgumentParser(description="Stage 2: Full fine-tuning (Qwen3)")
     p.add_argument("--stage1-model", required=True)
     p.add_argument("--train-file", required=True)
     p.add_argument("--val-file", default=None)

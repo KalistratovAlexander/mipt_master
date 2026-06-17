@@ -8,7 +8,7 @@ For every SID task and every beam prediction, check if the predicted
 
 Catalog = union of all `per_sample_gold` tuples across all 12 runs × 8 tasks.
 Requires per_sample_beam_preds + per_sample_gold in results_unified.json
-(Option-2 patch; pre-patch runs without per_sample_beam_preds are skipped).
+(runs without per_sample_beam_preds are skipped).
 
 Writes JSON: results/post_hoc_catalog_hit.json
 """
@@ -102,7 +102,7 @@ def main():
                 beam = t.get("beam", {})
                 preds = beam.get("per_sample_beam_preds")
                 if not preds:
-                    # pre-patch run; skip
+                    # no per-sample beam predictions; skip
                     continue
                 n_pred_total = 0
                 n_pred_in_cat = 0

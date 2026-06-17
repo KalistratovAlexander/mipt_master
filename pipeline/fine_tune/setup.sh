@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Common setup for both stages on vast.ai (Qwen3-1.8B)
+# Common setup for both stages on vast.ai (Qwen3)
 # Installs all dependencies once. Idempotent — safe to run multiple times.
 #
 # Called automatically by stage1/run.sh and stage2/run.sh

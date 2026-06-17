@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Stage 1: Vocabulary expansion for Qwen3-1.8B with Semantic IDs.
+"""Stage 1: Vocabulary expansion for Qwen3 with Semantic IDs.
 
 Adds 1027 SID tokens to vocabulary and trains ONLY their embeddings.
-All other params frozen. Qwen3-1.8B has tied embeddings (input == output).
+All other params frozen. Qwen3 ties input/output embeddings for 0.6B/1.7B/4B; the 8B variant is untied (both matrices receive the new rows).
 
 1.8B-specific: batch=64, no gradient_checkpointing.
 
@@ -297,7 +297,7 @@ class EmbeddingMonitorCallback(TrainerCallback):
 # ---------------------------------------------------------------------------
 
 def main():
-    p = argparse.ArgumentParser(description="Stage 1: Vocab expansion (Qwen3-1.8B)")
+    p = argparse.ArgumentParser(description="Stage 1: Vocab expansion (Qwen3)")
     p.add_argument("--model-name", default="Qwen/Qwen3-1.7B")
     p.add_argument("--train-file", required=True)
     p.add_argument("--val-file", default=None)
