@@ -50,7 +50,7 @@ tail -f train_1.8b.log
 | batch | 32 |
 | grad_accum | 4 |
 | eff_batch | 128 |
-| epochs | 2 |
+| epochs | 1 |
 | warmup | 3% |
 | max_seq_length | 512 |
 | optimizer | adamw_8bit |
@@ -73,11 +73,11 @@ bash run_1.8b.sh --resume
 
 ## GPU requirements & time estimates
 
-| GPU | Time (all 4.7M, 2 epochs) |
-|-----|---------------------------|
-| H100 80GB | ~2-4 hours |
-| A100 40GB | ~4-6 hours |
-| RTX 4090 24GB | ~8-12 hours |
+| GPU | Time (all 4.7M, 1 epoch) |
+|-----|--------------------------|
+| H100 80GB | ~1-2 hours |
+| A100 40GB | ~2-3 hours |
+| RTX 4090 24GB | ~4-6 hours |
 
 For quick test: `bash run_1.8b.sh --max-train-samples 10000 --epochs 1`
 
