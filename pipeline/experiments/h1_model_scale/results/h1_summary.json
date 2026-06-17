@@ -1,0 +1,288 @@
+{
+  "_note": "Compact H1 summary derived from the published eval artifacts. Full per-sample JSONs: HF dataset kalistratov/h1-eval-results-4size.",
+  "eval": {
+    "samples_per_task_sid": 1000,
+    "samples_per_task_text": 300,
+    "beam_size": 10,
+    "seed": 42,
+    "cosine_model": "Qwen/Qwen3-Embedding-0.6B"
+  },
+  "per_size": {
+    "0.6B": {
+      "model": "kalistratov/qwen3-0.6b-sid-pet-1ep-seed42",
+      "perplexity_wikitext2": {
+        "base": 22.44,
+        "fine_tuned": 910.01,
+        "degradation_x": 40.6
+      },
+      "sid_tasks": {
+        "title_to_sid": {
+          "recall@10_A": 0.599,
+          "recall@10_AB": 0.076,
+          "recall@10_ABC": 0.022,
+          "recall@10_ABCD": 0.015
+        },
+        "description_to_sid": {
+          "recall@10_A": 0.631,
+          "recall@10_AB": 0.052,
+          "recall@10_ABC": 0.016,
+          "recall@10_ABCD": 0.013
+        },
+        "features_to_sid": {
+          "recall@10_A": 0.556,
+          "recall@10_AB": 0.062,
+          "recall@10_ABC": 0.017,
+          "recall@10_ABCD": 0.013
+        },
+        "copurchase_forward": {
+          "recall@10_A": 0.153,
+          "recall@10_AB": 0.038,
+          "recall@10_ABC": 0.025,
+          "recall@10_ABCD": 0.025
+        },
+        "copurchase_backward": {
+          "recall@10_A": 0.155,
+          "recall@10_AB": 0.032,
+          "recall@10_ABC": 0.015,
+          "recall@10_ABCD": 0.015
+        },
+        "seq_last_2": {
+          "recall@10_A": 0.242,
+          "recall@10_AB": 0.084,
+          "recall@10_ABC": 0.067,
+          "recall@10_ABCD": 0.066
+        },
+        "seq_last_3": {
+          "recall@10_A": 0.22,
+          "recall@10_AB": 0.071,
+          "recall@10_ABC": 0.057,
+          "recall@10_ABCD": 0.055
+        },
+        "seq_last_5": {
+          "recall@10_A": 0.241,
+          "recall@10_AB": 0.075,
+          "recall@10_ABC": 0.055,
+          "recall@10_ABCD": 0.055
+        }
+      },
+      "text_tasks": {
+        "sid_to_title": {
+          "cosine_sim": 0.6966
+        },
+        "sid_to_description": {
+          "cosine_sim": 0.5605
+        },
+        "sid_to_features": {
+          "cosine_sim": 0.5716
+        }
+      }
+    },
+    "1.7B": {
+      "model": "kalistratov/qwen3-1.7b-sid-pet-1ep-seed42",
+      "perplexity_wikitext2": {
+        "base": 17.57,
+        "fine_tuned": 2777.0,
+        "degradation_x": 158.1
+      },
+      "sid_tasks": {
+        "title_to_sid": {
+          "recall@10_A": 0.62,
+          "recall@10_AB": 0.051,
+          "recall@10_ABC": 0.011,
+          "recall@10_ABCD": 0.01
+        },
+        "description_to_sid": {
+          "recall@10_A": 0.672,
+          "recall@10_AB": 0.044,
+          "recall@10_ABC": 0.01,
+          "recall@10_ABCD": 0.005
+        },
+        "features_to_sid": {
+          "recall@10_A": 0.596,
+          "recall@10_AB": 0.047,
+          "recall@10_ABC": 0.013,
+          "recall@10_ABCD": 0.01
+        },
+        "copurchase_forward": {
+          "recall@10_A": 0.151,
+          "recall@10_AB": 0.034,
+          "recall@10_ABC": 0.023,
+          "recall@10_ABCD": 0.023
+        },
+        "copurchase_backward": {
+          "recall@10_A": 0.153,
+          "recall@10_AB": 0.029,
+          "recall@10_ABC": 0.014,
+          "recall@10_ABCD": 0.012
+        },
+        "seq_last_2": {
+          "recall@10_A": 0.231,
+          "recall@10_AB": 0.087,
+          "recall@10_ABC": 0.07,
+          "recall@10_ABCD": 0.069
+        },
+        "seq_last_3": {
+          "recall@10_A": 0.236,
+          "recall@10_AB": 0.072,
+          "recall@10_ABC": 0.056,
+          "recall@10_ABCD": 0.054
+        },
+        "seq_last_5": {
+          "recall@10_A": 0.245,
+          "recall@10_AB": 0.067,
+          "recall@10_ABC": 0.053,
+          "recall@10_ABCD": 0.053
+        }
+      },
+      "text_tasks": {
+        "sid_to_title": {
+          "cosine_sim": 0.7169
+        },
+        "sid_to_description": {
+          "cosine_sim": 0.5715
+        },
+        "sid_to_features": {
+          "cosine_sim": 0.5814
+        }
+      }
+    },
+    "4B": {
+      "model": "kalistratov/qwen3-4b-sid-pet-1ep-seed42",
+      "perplexity_wikitext2": {
+        "base": 14.95,
+        "fine_tuned": 382.01,
+        "degradation_x": 25.6
+      },
+      "sid_tasks": {
+        "title_to_sid": {
+          "recall@10_A": 0.719,
+          "recall@10_AB": 0.097,
+          "recall@10_ABC": 0.034,
+          "recall@10_ABCD": 0.025
+        },
+        "description_to_sid": {
+          "recall@10_A": 0.755,
+          "recall@10_AB": 0.089,
+          "recall@10_ABC": 0.031,
+          "recall@10_ABCD": 0.024
+        },
+        "features_to_sid": {
+          "recall@10_A": 0.688,
+          "recall@10_AB": 0.089,
+          "recall@10_ABC": 0.028,
+          "recall@10_ABCD": 0.023
+        },
+        "copurchase_forward": {
+          "recall@10_A": 0.163,
+          "recall@10_AB": 0.037,
+          "recall@10_ABC": 0.026,
+          "recall@10_ABCD": 0.026
+        },
+        "copurchase_backward": {
+          "recall@10_A": 0.166,
+          "recall@10_AB": 0.032,
+          "recall@10_ABC": 0.019,
+          "recall@10_ABCD": 0.018
+        },
+        "seq_last_2": {
+          "recall@10_A": 0.254,
+          "recall@10_AB": 0.092,
+          "recall@10_ABC": 0.077,
+          "recall@10_ABCD": 0.074
+        },
+        "seq_last_3": {
+          "recall@10_A": 0.245,
+          "recall@10_AB": 0.082,
+          "recall@10_ABC": 0.064,
+          "recall@10_ABCD": 0.062
+        },
+        "seq_last_5": {
+          "recall@10_A": 0.247,
+          "recall@10_AB": 0.067,
+          "recall@10_ABC": 0.054,
+          "recall@10_ABCD": 0.053
+        }
+      },
+      "text_tasks": {
+        "sid_to_title": {
+          "cosine_sim": 0.7507
+        },
+        "sid_to_description": {
+          "cosine_sim": 0.6173
+        },
+        "sid_to_features": {
+          "cosine_sim": 0.6335
+        }
+      }
+    },
+    "8B": {
+      "model": "kalistratov/qwen3-8b-sid-pet-1ep-seed42",
+      "perplexity_wikitext2": {
+        "base": 10.53,
+        "fine_tuned": 275.82,
+        "degradation_x": 26.2
+      },
+      "sid_tasks": {
+        "title_to_sid": {
+          "recall@10_A": 0.748,
+          "recall@10_AB": 0.102,
+          "recall@10_ABC": 0.026,
+          "recall@10_ABCD": 0.017
+        },
+        "description_to_sid": {
+          "recall@10_A": 0.775,
+          "recall@10_AB": 0.094,
+          "recall@10_ABC": 0.029,
+          "recall@10_ABCD": 0.021
+        },
+        "features_to_sid": {
+          "recall@10_A": 0.733,
+          "recall@10_AB": 0.082,
+          "recall@10_ABC": 0.032,
+          "recall@10_ABCD": 0.026
+        },
+        "copurchase_forward": {
+          "recall@10_A": 0.15,
+          "recall@10_AB": 0.034,
+          "recall@10_ABC": 0.024,
+          "recall@10_ABCD": 0.024
+        },
+        "copurchase_backward": {
+          "recall@10_A": 0.169,
+          "recall@10_AB": 0.036,
+          "recall@10_ABC": 0.019,
+          "recall@10_ABCD": 0.018
+        },
+        "seq_last_2": {
+          "recall@10_A": 0.235,
+          "recall@10_AB": 0.078,
+          "recall@10_ABC": 0.063,
+          "recall@10_ABCD": 0.061
+        },
+        "seq_last_3": {
+          "recall@10_A": 0.239,
+          "recall@10_AB": 0.075,
+          "recall@10_ABC": 0.058,
+          "recall@10_ABCD": 0.057
+        },
+        "seq_last_5": {
+          "recall@10_A": 0.243,
+          "recall@10_AB": 0.064,
+          "recall@10_ABC": 0.048,
+          "recall@10_ABCD": 0.048
+        }
+      },
+      "text_tasks": {
+        "sid_to_title": {
+          "cosine_sim": 0.7465
+        },
+        "sid_to_description": {
+          "cosine_sim": 0.6139
+        },
+        "sid_to_features": {
+          "cosine_sim": 0.6281
+        }
+      }
+    }
+  }
+}

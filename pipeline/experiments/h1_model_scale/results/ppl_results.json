@@ -1,0 +1,62 @@
+{
+  "base": [
+    {
+      "model": "Qwen/Qwen3-0.6B",
+      "params_b": 0.6,
+      "ppl": 22.44,
+      "n_tokens": 35950,
+      "elapsed_s": 21.9
+    },
+    {
+      "model": "Qwen/Qwen3-1.7B",
+      "params_b": 1.72,
+      "ppl": 17.57,
+      "n_tokens": 35950,
+      "elapsed_s": 28.4
+    },
+    {
+      "model": "Qwen/Qwen3-4B",
+      "params_b": 4.02,
+      "ppl": 14.95,
+      "n_tokens": 35950,
+      "elapsed_s": 42.5
+    },
+    {
+      "model": "Qwen/Qwen3-8B",
+      "params_b": 8.19,
+      "ppl": 10.53,
+      "n_tokens": 35950,
+      "elapsed_s": 75.7
+    }
+  ],
+  "fine_tuned": [
+    {
+      "model": "kalistratov/qwen3-0.6b-sid-pet-1ep-seed42",
+      "params_b": 0.6,
+      "ppl": 910.01,
+      "n_tokens": 35950,
+      "elapsed_s": 15.2
+    },
+    {
+      "model": "kalistratov/qwen3-1.7b-sid-pet-1ep-seed42",
+      "params_b": 1.72,
+      "ppl": 2777.0,
+      "n_tokens": 35950,
+      "elapsed_s": 24.0
+    },
+    {
+      "model": "kalistratov/qwen3-4b-sid-pet-1ep-seed42",
+      "params_b": 4.02,
+      "ppl": 382.01,
+      "n_tokens": 35950,
+      "elapsed_s": 41.1
+    },
+    {
+      "model": "kalistratov/qwen3-8b-sid-pet-1ep-seed42",
+      "params_b": 8.2,
+      "ppl": 275.82,
+      "n_tokens": 35950,
+      "elapsed_s": 72.8
+    }
+  ]
+}

@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-"""H1 Section F: McNemar (F1) + paired bootstrap CI (F2) on Δ = 8B − 1.7B.
+"""H1 confirmatory + descriptive statistics for one adjacent size-pair.
 
-Reads two `eval_unified_*.json` files (each must contain inline metrics from
-the patched evaluator) and dumps `h1_stat_tests.json` with:
-- mcnemar per task on hit@10 (m=8, Bonferroni α=0.05/8 ≈ 0.00625)
-- paired bootstrap CI (95% and Bonferroni-corrected) per (task, metric)
+Implements the thesis protocol (§3.2.3): the confirmatory test is a paired
+bootstrap (10000 resamples) on each task's PRIMARY metric — Recall@10 on the
+full identifier (hit@10, level ABCD) for SID-prediction tasks, cosine_sim for
+text-generation tasks — with a Bonferroni correction over m=3 (the three
+adjacent size-pairs (0.6,1.7),(1.7,4),(4,8) form the per-task family;
+alpha_corrected = 0.05/3 ≈ 0.0167). run_h1.sh invokes this once per pair.
 
-Bootstrap m count = 81 (8 SID tasks × 6 prompt metrics + 8 head + 8 tail
-+ 8 coverage@10 + 3 text tasks × 3 metrics). valid_format (saturated near
-1.0) excluded — no useful signal in CI.
+Prefix-level Recall@10 (A/AB/ABC), NDCG@10, catalog-hit, head/tail and
+coverage@10 are reported DESCRIPTIVELY with plain 95% CIs (no Bonferroni),
+per §3.2.3. Reads two `eval_unified_*.json` files (each must contain the
+inline per-sample arrays from the evaluator) and writes `h1_stat_tests.json`.
 """
 
 import argparse
@@ -30,7 +33,16 @@ SID_TASKS = [
     "seq_last_2", "seq_last_3", "seq_last_5",
 ]
 TEXT_TASKS = ["sid_to_title", "sid_to_description", "sid_to_features"]
-TEXT_METRICS = ["char_f1", "rouge_l", "cosine_sim"]
+
+# Per-task primary (confirmatory) metric and descriptive companions.
+SID_PRIMARY = "hit@10"          # Recall@10 on the full identifier (level ABCD)
+TEXT_PRIMARY = "cosine_sim"
+SID_DESCRIPTIVE = [
+    "hier_hit@10.A", "hier_hit@10.AB", "hier_hit@10.ABC",
+    "ndcg@10", "catalog_hit_top1",
+]
+TEXT_DESCRIPTIVE = ["char_f1", "rouge_l"]
+# Metrics derived per prompt by derive_sid_per_prompt (superset of the above).
 SID_PROMPT_METRICS = [
     "hit@10", "ndcg@10",
     "hier_hit@10.A", "hier_hit@10.AB", "hier_hit@10.ABC",
@@ -136,29 +148,8 @@ def derive_sid_per_prompt(
 
 
 # ---------------------------------------------------------------------------
-# Statistical tests
+# Statistical tests (paired bootstrap — thesis §3.2.3)
 # ---------------------------------------------------------------------------
-
-def mcnemar_test(arr_a, arr_b) -> dict:
-    from scipy.stats import binom, chi2  # lazy: scipy missing in some local envs
-    a = np.asarray([int(x) for x in arr_a])
-    b_arr = np.asarray([int(x) for x in arr_b])
-    b = int(((a == 0) & (b_arr == 1)).sum())
-    c = int(((a == 1) & (b_arr == 0)).sum())
-    n_disc = b + c
-    n = int(len(a))
-    if n_disc == 0:
-        return {"p_value": 1.0, "b": 0, "c": 0, "method": "no_discordant", "n": n}
-    if min(b, c) < 25:
-        x = min(b, c)
-        p = min(2 * float(binom.cdf(x, n_disc, 0.5)), 1.0)
-        method = "exact"
-    else:
-        stat = (abs(b - c) - 1) ** 2 / n_disc
-        p = float(chi2.sf(stat, 1))
-        method = "chi2_yates"
-    return {"p_value": p, "b": b, "c": c, "method": method, "n": n}
-
 
 def paired_bootstrap_deltas(arr_a, arr_b, n_iter: int, rng: np.random.Generator) -> np.ndarray:
     a = np.asarray(arr_a, dtype=float)
@@ -182,38 +173,45 @@ def ci_from_deltas(deltas: np.ndarray, alpha: float) -> dict:
     }
 
 
+def p_two_sided(deltas: np.ndarray) -> float:
+    if len(deltas) == 0:
+        return 1.0
+    return min(1.0, 2.0 * min(float((deltas >= 0).mean()), float((deltas <= 0).mean())))
+
+
 def bootstrap_block(
     arr_a, arr_b, n_iter: int, alpha: float, alpha_bonf: float, rng: np.random.Generator,
 ) -> dict:
+    """Confirmatory block: Δ, two-sided p, 95% CI and Bonferroni-corrected CI."""
     a = np.asarray(arr_a, dtype=float)
     b = np.asarray(arr_b, dtype=float)
     n = min(len(a), len(b))
     if n == 0:
-        return {
-            "delta": 0.0, "n": 0,
-            "ci95": {"ci_low": 0.0, "ci_high": 0.0, "significant": False},
-            "ci_bonf": {"ci_low": 0.0, "ci_high": 0.0, "significant": False},
-        }
+        empty = {"ci_low": 0.0, "ci_high": 0.0, "significant": False}
+        return {"delta": 0.0, "n": 0, "p_value": 1.0, "ci95": empty, "ci_bonf": empty}
     deltas = paired_bootstrap_deltas(a, b, n_iter, rng)
     return {
         "delta": float((b[:n] - a[:n]).mean()),
         "n": int(n),
+        "p_value": p_two_sided(deltas),
         "ci95": ci_from_deltas(deltas, alpha),
         "ci_bonf": ci_from_deltas(deltas, alpha_bonf),
     }
 
 
+def descriptive_block(arr_a, arr_b, n_iter: int, alpha: float, rng: np.random.Generator) -> dict:
+    """Descriptive block: Δ and plain 95% CI only (no Bonferroni), per §3.2.3."""
+    full = bootstrap_block(arr_a, arr_b, n_iter, alpha, alpha, rng)
+    return {"delta": full["delta"], "n": full["n"], "ci95": full["ci95"]}
+
+
 def coverage_bootstrap(
     beam_preds_a, beam_preds_b, catalog_size: int,
-    n_iter: int, alpha: float, alpha_bonf: float, rng: np.random.Generator,
+    n_iter: int, alpha: float, rng: np.random.Generator,
 ) -> dict:
     n = min(len(beam_preds_a), len(beam_preds_b))
     if n == 0 or catalog_size == 0:
-        return {
-            "delta": 0.0, "n": 0,
-            "ci95": {"ci_low": 0.0, "ci_high": 0.0, "significant": False},
-            "ci_bonf": {"ci_low": 0.0, "ci_high": 0.0, "significant": False},
-        }
+        return {"delta": 0.0, "n": 0, "ci95": {"ci_low": 0.0, "ci_high": 0.0, "significant": False}}
     sets_a = [frozenset(tuple(s) for s in bms if s is not None) for bms in beam_preds_a[:n]]
     sets_b = [frozenset(tuple(s) for s in bms if s is not None) for bms in beam_preds_b[:n]]
     deltas = np.empty(n_iter)
@@ -227,12 +225,7 @@ def coverage_bootstrap(
         deltas[it] = (len(ub) - len(ua)) / catalog_size
     full_a = len(set().union(*sets_a)) / catalog_size if sets_a else 0.0
     full_b = len(set().union(*sets_b)) / catalog_size if sets_b else 0.0
-    return {
-        "delta": float(full_b - full_a),
-        "n": int(n),
-        "ci95": ci_from_deltas(deltas, alpha),
-        "ci_bonf": ci_from_deltas(deltas, alpha_bonf),
-    }
+    return {"delta": float(full_b - full_a), "n": int(n), "ci95": ci_from_deltas(deltas, alpha)}
 
 
 # ---------------------------------------------------------------------------
@@ -241,8 +234,8 @@ def coverage_bootstrap(
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--eval-1p7b", required=True, help="JSON from evaluate_unified.py for 1.7B")
-    ap.add_argument("--eval-8b", required=True, help="JSON from evaluate_unified.py for 8B")
+    ap.add_argument("--eval-1p7b", required=True, help="JSON for the SMALLER model of the pair")
+    ap.add_argument("--eval-8b", required=True, help="JSON for the LARGER model of the pair")
     ap.add_argument("--catalog", required=True,
                     help="Pet_Supplies_items_with_semantic_ids.parquet")
     ap.add_argument("--train-sequences", required=True,
@@ -274,37 +267,29 @@ def main() -> None:
     print(f"  head: {len(head_sids):,} / tail: {len(tail_sids):,} (of {n_unique:,} train SIDs)",
           file=sys.stderr)
 
-    n_mcnemar = len(SID_TASKS)  # 8
-    n_bootstrap_metrics = (
-        len(SID_TASKS) * len(SID_PROMPT_METRICS)         # 8*6 = 48
-        + len(SID_TASKS) * 2                              # head + tail = 16
-        + len(SID_TASKS)                                  # coverage@10 = 8
-        + len(TEXT_TASKS) * len(TEXT_METRICS)             # 9
-    )  # = 81
-
-    alpha_mc_bonf = args.alpha / n_mcnemar
-    alpha_bs_bonf = args.alpha / n_bootstrap_metrics
+    # Confirmatory family per task = the 3 adjacent size-pairs -> Bonferroni m=3.
+    M = 3
+    alpha_bonf = args.alpha / M  # ~0.0167
 
     out: Dict = {
         "meta": {
             "n_bootstrap": args.n_bootstrap,
             "n_bootstrap_coverage": args.n_bootstrap_coverage,
             "alpha": args.alpha,
+            "bonferroni_m": M,
+            "alpha_corrected": alpha_bonf,
+            "confirmatory_metric": {"sid_prediction": SID_PRIMARY, "text_generation": TEXT_PRIMARY},
             "head_tail_pct": args.head_tail_pct,
             "seed": args.seed,
-            "m_mcnemar": n_mcnemar,
-            "m_bootstrap": n_bootstrap_metrics,
-            "alpha_mcnemar_bonf": alpha_mc_bonf,
-            "alpha_bootstrap_bonf": alpha_bs_bonf,
-            "eval_1p7b": str(args.eval_1p7b),
-            "eval_8b": str(args.eval_8b),
+            "eval_smaller": str(args.eval_1p7b),
+            "eval_larger": str(args.eval_8b),
             "catalog_size": len(catalog),
             "n_unique_train_sids": n_unique,
             "head_size": len(head_sids),
             "tail_size": len(tail_sids),
         },
-        "mcnemar": {},
-        "bootstrap_ci": {},
+        "confirmatory": {},   # per task: primary metric, paired bootstrap, Bonferroni m=3
+        "descriptive": {},    # per task: prefix levels / ndcg / catalog / head / tail / coverage, 95% CI only
     }
 
     for t in SID_TASKS:
@@ -319,38 +304,33 @@ def main() -> None:
         per_a = derive_sid_per_prompt(beam_a, catalog, head_sids, tail_sids)
         per_b = derive_sid_per_prompt(beam_b, catalog, head_sids, tail_sids)
 
-        mc = mcnemar_test(per_a["hit@10"], per_b["hit@10"])
-        mc["significant_bonf"] = bool(mc["p_value"] < alpha_mc_bonf)
-        out["mcnemar"][t] = mc
+        # Confirmatory: Recall@10 on the full identifier (ABCD), Bonferroni m=3.
+        out["confirmatory"][t] = {
+            "metric": SID_PRIMARY,
+            **bootstrap_block(per_a[SID_PRIMARY], per_b[SID_PRIMARY],
+                              args.n_bootstrap, args.alpha, alpha_bonf, rng),
+        }
 
-        out["bootstrap_ci"][t] = {}
-        for m in SID_PROMPT_METRICS:
-            out["bootstrap_ci"][t][m] = bootstrap_block(
-                per_a[m], per_b[m], args.n_bootstrap, args.alpha, alpha_bs_bonf, rng,
-            )
-
+        # Descriptive: prefix levels / ndcg / catalog-hit, plus head/tail and coverage (95% CI only).
+        desc = {m: descriptive_block(per_a[m], per_b[m], args.n_bootstrap, args.alpha, rng)
+                for m in SID_DESCRIPTIVE}
         head_common = sorted(set(per_a["_head_idx"]) & set(per_b["_head_idx"]))
         tail_common = sorted(set(per_a["_tail_idx"]) & set(per_b["_tail_idx"]))
         if head_common:
-            out["bootstrap_ci"][t]["head_recall@10"] = bootstrap_block(
+            desc["head_recall@10"] = descriptive_block(
                 [per_a["hit@10"][i] for i in head_common],
-                [per_b["hit@10"][i] for i in head_common],
-                args.n_bootstrap, args.alpha, alpha_bs_bonf, rng,
-            )
+                [per_b["hit@10"][i] for i in head_common], args.n_bootstrap, args.alpha, rng)
         if tail_common:
-            out["bootstrap_ci"][t]["tail_recall@10"] = bootstrap_block(
+            desc["tail_recall@10"] = descriptive_block(
                 [per_a["hit@10"][i] for i in tail_common],
-                [per_b["hit@10"][i] for i in tail_common],
-                args.n_bootstrap, args.alpha, alpha_bs_bonf, rng,
-            )
-
+                [per_b["hit@10"][i] for i in tail_common], args.n_bootstrap, args.alpha, rng)
         print(f"  coverage bootstrap for {t}...", file=sys.stderr)
-        out["bootstrap_ci"][t]["coverage@10"] = coverage_bootstrap(
+        desc["coverage@10"] = coverage_bootstrap(
             beam_a.get("per_sample_beam_preds", []),
             beam_b.get("per_sample_beam_preds", []),
-            len(catalog),
-            args.n_bootstrap_coverage, args.alpha, alpha_bs_bonf, rng,
+            len(catalog), args.n_bootstrap_coverage, args.alpha, rng,
         )
+        out["descriptive"][t] = desc
 
     for t in TEXT_TASKS:
         if t not in res_a.get("tasks", {}) or t not in res_b.get("tasks", {}):
@@ -362,15 +342,17 @@ def main() -> None:
             print(f"  warn: text task {t} missing per_sample — re-run with patched evaluator",
                   file=sys.stderr)
             continue
-        out["bootstrap_ci"][t] = {}
-        for m in TEXT_METRICS:
-            arr_a = text_a.get(m, [])
-            arr_b = text_b.get(m, [])
-            if not arr_a or not arr_b:
-                continue
-            out["bootstrap_ci"][t][m] = bootstrap_block(
-                arr_a, arr_b, args.n_bootstrap, args.alpha, alpha_bs_bonf, rng,
-            )
+        if text_a.get(TEXT_PRIMARY) and text_b.get(TEXT_PRIMARY):
+            out["confirmatory"][t] = {
+                "metric": TEXT_PRIMARY,
+                **bootstrap_block(text_a[TEXT_PRIMARY], text_b[TEXT_PRIMARY],
+                                  args.n_bootstrap, args.alpha, alpha_bonf, rng),
+            }
+        desc = {}
+        for m in TEXT_DESCRIPTIVE:
+            if text_a.get(m) and text_b.get(m):
+                desc[m] = descriptive_block(text_a[m], text_b[m], args.n_bootstrap, args.alpha, rng)
+        out["descriptive"][t] = desc
 
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
     with open(args.output, "w", encoding="utf-8") as f:

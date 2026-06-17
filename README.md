@@ -52,8 +52,8 @@ Recall@10 на задаче генерации идентификатора по
 ```
 data/                              Пайплайн подготовки данных (Jupyter notebooks)
   download_data.ipynb              1. Загрузка сырых данных Amazon
-  extract_data.ipynb               2. Извлечение структурированных метаданных (Gemini API)
-  clean_data.ipynb                 3. Очистка описаний товаров (Gemini API)
+  extract_data.ipynb               2. Извлечение структурированных метаданных (Gemini 2.5 Flash Lite через OpenRouter)
+  clean_data.ipynb                 3. Очистка описаний товаров (Gemini 2.5 Flash Lite через OpenRouter)
   enrich_data.ipynb                4. Объединение обогащённых полей
   prepape_data.ipynb               5. Формирование таблицы товаров и пользовательских последовательностей
   validate_pipeline.ipynb          6. Валидация выходных данных
@@ -95,7 +95,7 @@ pip install torch --index-url https://download.pytorch.org/whl/cu121
 
 ### Подготовка данных
 
-Ноутбуки выполняются последовательно от `data/download_data.ipynb` до `pipeline/prepare_data_for_llm.ipynb`. Шаги 2–3 требуют ключ Gemini API; шаг 7 (генерация эмбеддингов) выполняется в среде Kaggle с GPU.
+Ноутбуки выполняются последовательно от `data/download_data.ipynb` до `pipeline/prepare_data_for_llm.ipynb`. Шаги 2–3 обращаются к `google/gemini-2.5-flash-lite` через OpenRouter и требуют переменную окружения `OPENROUTER_API_KEY`; шаг 7 (генерация эмбеддингов) выполняется в среде Kaggle с GPU.
 
 ### Обучение
 
@@ -127,3 +127,7 @@ python pipeline/evaluation/evaluate_unified.py \
     --model-path kalistratov/qwen3-8b-sid-pet-1ep-seed42 \
     --data-dir data
 ```
+
+## Лицензия
+
+Код распространяется под лицензией MIT (см. [LICENSE](LICENSE)). Сторонние материалы под своими лицензиями: датасет Amazon Reviews 2023 (McAuley Lab) и веса Qwen3 / Qwen3-Embedding (Apache-2.0).

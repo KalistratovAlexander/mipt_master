@@ -23,5 +23,11 @@ pandas>=2.0.0
 polars>=0.20.0
 pyarrow>=14.0.0
 
+# Data enrichment (OpenAI-compatible client for OpenRouter, data-prep steps 2-3)
+openai>=1.0.0
+
 # RQ-VAE
 tqdm>=4.66.0
+
+# Tests
+pytest>=7.0.0

@@ -23,7 +23,7 @@
 
 - 4 arms × 3 seeds = **12 training runs** (Stage 1 + Stage 2 на 0.6B).
 - **Primary:** Recall@10 на text→SID (max SNR per power analysis).
-- **Test:** Friedman omnibus → 3 paired bootstrap (A−C, A−D, C−D) с Bonferroni m=3 (α=0.0167).
+- **Test:** 3 парных бутстреп-контраста (A−C, A−D, C−D) с Bonferroni m=3 (α=0.0167).
 - Arm B — descriptive-only контроль.
 - **Pre-registration:** `artifacts/h2_init_scales.json` коммитится ДО первого запуска.
 
@@ -36,7 +36,7 @@ h2_init_ablation/
 ├── precompute_all.py           (→ artifacts/*: scales, codebook, title_map)
 ├── evaluate_recall_at_10.py    (primary: title_to_sid × 1000, per-sample hit@10)
 ├── transversal_diagnostics.py  (post-hoc: cos + CKA + eff rank + RSA)
-├── aggregate_stats.py          (Friedman + paired bootstrap + descriptive tables)
+├── aggregate_stats.py          (paired bootstrap m=3 + descriptive tables)
 ├── run.sh                   (entry: bash run.sh <ARM> <SEED>; DRY_RUN=1 для smoke)
 ├── run_all.sh                  (12-run orchestrator + transversal + aggregate; skip-if-done)
 ├── pack.sh                  (build tar.gz для vast.ai)

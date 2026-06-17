@@ -41,8 +41,8 @@ BASE_8B=Qwen/Qwen3-8B
 
 COMMON=(
   --data-dir "$DATA_DIR"
-  --samples-per-task 1500
-  --samples-per-task-text 500
+  --samples-per-task 1000
+  --samples-per-task-text 300
   --seed 42
   --beam-size 10
   --attn-impl flash_attention_2

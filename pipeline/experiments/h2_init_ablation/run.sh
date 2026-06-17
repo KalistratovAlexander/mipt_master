@@ -141,7 +141,7 @@ python3 "$WORKSPACE/evaluation/evaluate_unified.py" \
     --model-path "$STAGE2_OUT/final" \
     --data-dir "$DATA_DIR" \
     --model-name "arm_${ARM}_seed_${SEED}" \
-    --samples-per-task "$EVAL_N_SAMPLES" --samples-per-task-text 200 \
+    --samples-per-task "$EVAL_N_SAMPLES" --samples-per-task-text 300 \
     --beam-size 10 --seed 42 \
     --attn-impl flash_attention_2 --max-new-tokens-sid 16 --sid-batch-size 8 \
     --skip-benchmark \

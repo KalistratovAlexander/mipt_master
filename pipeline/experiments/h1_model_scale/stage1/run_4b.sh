@@ -25,7 +25,7 @@ python3 train_1.8b.py \
     --max-val-samples 2000 \
     --lr 1e-3 \
     --batch-size 64 \
-    --grad-accum 1 \
+    --grad-accum 2 \
     --max-steps 2000 \
     --warmup-steps 100 \
     --logging-steps 50 \

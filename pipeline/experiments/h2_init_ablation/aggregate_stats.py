@@ -7,13 +7,10 @@ Walks runs/arm_{A,B,C,D}_seed_{42,43,44}/ and collects:
   2. results_unified.json   — all 11 tasks + WikiText-2 PPL from evaluate_unified.py.
   3. learning_curve/*.json  — 6 snapshots × Recall@10.
 
-Pre-registered primary test:
-  1. Friedman omnibus across the 3 candidate arms {A, C, D} × 3 seeds.
-     Arm B is descriptive-only (variance-matched control); including it would
-     answer "does ANY arm differ?" instead of the registered question
-     "do the candidate structured inits differ?".
-  2. 3 paired bootstrap contrasts {A-C, A-D, C-D} on concatenated hits.
-  3. Bonferroni correction: alpha_corrected = 0.05 / 3 = 0.01667.
+Primary test (thesis §3.2.3 / §3.2.5):
+  - 3 paired bootstrap contrasts {A-C, A-D, C-D} on concatenated per-sample hits.
+  - Bonferroni correction over m=3: alpha_corrected = 0.05 / 3 = 0.01667.
+  Arm B is a variance-matched random control, reported descriptively only.
 
 Descriptive surface:
   - per-arm × per-task Recall@10 / NDCG@10 / hier_hit@10 / valid-format means (±std).
@@ -35,7 +32,6 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from scipy.stats import friedmanchisquare
 
 sys.path.insert(0, str(Path(__file__).parent))
 from init_strategies import load_pre_registered  # noqa: E402
@@ -138,14 +134,7 @@ def main() -> None:
     for arm in arms:
         print(f"  {arm}: {recall_table[arm]}  mean={np.mean(recall_table[arm]):.4f}")
 
-    # --- 2. Friedman omnibus across the 3 candidate arms × 3 seeds ---
-    # Arm B is descriptive-only (see module docstring); excluded from omnibus.
-    friedman_arms = [a for a in arms if a != "B"]
-    friedman = friedmanchisquare(*(recall_table[a] for a in friedman_arms))
-    print(f"\nFriedman ({'+'.join(friedman_arms)}): "
-          f"chi2={friedman.statistic:.4f}  p={friedman.pvalue:.4f}")
-
-    # --- 3. Planned paired bootstrap contrasts on concatenated hits ---
+    # --- 2. Planned paired bootstrap contrasts on concatenated hits ---
     rng = np.random.default_rng(args.seed)
     contrast_results = {}
     for pair in contrasts:
@@ -236,11 +225,6 @@ def main() -> None:
             "per_arm_recall@10": recall_table,
             "per_arm_mean": {arm: float(np.mean(recall_table[arm])) for arm in arms},
             "per_arm_std": {arm: float(np.std(recall_table[arm], ddof=1)) for arm in arms},
-            "friedman": {
-                "arms": friedman_arms,
-                "statistic": float(friedman.statistic),
-                "p_value": float(friedman.pvalue),
-            },
             "contrasts": contrast_results,
         },
         "descriptive": {

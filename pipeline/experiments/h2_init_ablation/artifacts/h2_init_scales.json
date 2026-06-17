@@ -17,10 +17,8 @@
   "seeds": [42, 43, 44],
   "statistical_protocol": {
     "primary_metric": "recall@10_text_to_sid",
-    "omnibus": "friedman",
-    "omnibus_arms": ["A", "C", "D"],
-    "omnibus_excludes": ["B"],
-    "omnibus_exclude_reason": "arm B is variance-matched random control — descriptive only, not a candidate init",
+    "control_arm": "B",
+    "control_arm_reason": "arm B is variance-matched random control — descriptive only, not a candidate init",
     "planned_contrasts": [["A", "C"], ["A", "D"], ["C", "D"]],
     "bonferroni_m": 3,
     "alpha": 0.05,
