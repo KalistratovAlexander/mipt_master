@@ -1,8 +1,8 @@
-# H1 — Qwen3 Semantic ID Training (0.6B / 1.7B / 4B / 8B) — vast.ai Deployment
+# Qwen3 Semantic ID Training — shared two-stage trainer (vast.ai)
 
 > **Примечание об именах файлов.** Файлы `train_1.8b.py` сохраняют историческое имя: при создании инфраструктуры предполагалась модель `Qwen3-1.8B`, но в dense-семействе Qwen3 такой модели нет ([Qwen3 Technical Report, arXiv 2505.09388](https://arxiv.org/abs/2505.09388); [карточка Qwen3-1.7B](https://huggingface.co/Qwen/Qwen3-1.7B); доступны 0.6B, 1.7B, 4B, 8B, 14B, 32B). Конкретный размер задаётся скриптами `run_<size>.sh`, а единый тренажёр `train_1.8b.py` параметризуется размером модели.
 
-Two-stage pipeline for training Qwen3 (0.6B / 1.7B / 4B / 8B) with semantic IDs for product recommendations.
+Two-stage pipeline for training Qwen3 (0.6B / 1.7B / 4B / 8B) with semantic IDs for product recommendations. This shared trainer is used both for **H1** (the model-size sweep, via `run_<size>.sh`) and for **H2** (the embedding-init ablation in `../h2_init_ablation`, which packages this trainer via `pack_h2.sh`).
 
 ## Hardware Requirements
 
@@ -38,7 +38,7 @@ Two-stage pipeline for training Qwen3 (0.6B / 1.7B / 4B / 8B) with semantic IDs 
 
 ```bash
 cd /path/to/mipt_master
-bash pipeline/fine_tune_h1/pack.sh 8b   # размер: 0.6b | 1.8b | 4b | 8b
+bash pipeline/fine_tune/pack.sh 8b   # размер: 0.6b | 1.8b | 4b | 8b
 # Creates: vast_<MODEL>_package.tar.gz (~300 MB)
 ```
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unified evaluation of Semantic ID models for master's thesis.
+"""Unified evaluation of Semantic ID models.
 
 Produces identical JSON output for any model (1.8B, 8B, etc.) enabling
 direct comparison across all metrics.
@@ -2252,7 +2252,7 @@ def evaluate_model(
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser(
-        description="Unified evaluation of Semantic ID models for thesis"
+        description="Unified evaluation of Semantic ID models"
     )
     p.add_argument("--model-path", required=True, help="Path to model checkpoint")
     p.add_argument("--data-dir", required=True, help="Path to data directory")

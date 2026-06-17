@@ -163,7 +163,7 @@ def main() -> None:
 
     # --- 4. Descriptive surface from results_unified.json ---
     # Per (arm, seed) → raw unified.tasks dict. Per (arm, task) → mean/std of the
-    # key recall@10 metric across seeds (thesis will read deeper nested keys as needed).
+    # key recall@10 metric across seeds (downstream tooling reads deeper nested keys as needed).
     unified_by_run: dict = {}
     wikitext_by_run: dict = {}
     for arm in arms:

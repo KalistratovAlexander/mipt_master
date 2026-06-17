@@ -65,10 +65,10 @@ pipeline/                          ML-пайплайн
   prepare_data_for_llm.ipynb      10. Генерация 4,97 млн обучающих диалогов
   rqvae/                           RQ-VAE: модель, обучение, оценка
   evaluation/                      H1: единый оценщик, статистические тесты, run-скрипты
-  fine_tune_h1/                    H1: дообучение Qwen3 0.6B/1.7B/4B/8B (vast.ai)
+  fine_tune/                       Общий двухэтапный тренер Qwen3 (H1: размеры 0.6B/1.7B/4B/8B)
     stage1_vocab_expansion/        Stage 1: обучение только эмбеддингов
     stage2_full_finetune/          Stage 2: полное дообучение
-  h2_init_ablation/                H2: абляция инициализации эмбеддингов (4 способа × 3 seed)
+  h2_init_ablation/                H2: абляция инициализации (4 способа × 3 seed; переиспользует ../fine_tune)
 
 models/                            Обученные модели (не отслеживаются в git, доступны на HuggingFace)
   rqvae/                           Чекпоинт RQ-VAE — huggingface.co/kalistratov/rqvae-pet-supplies
@@ -99,7 +99,7 @@ pip install torch --index-url https://download.pytorch.org/whl/cu121
 
 ```bash
 # Сборка пакета для развёртывания (масштаб: 0.6b | 1.8b | 4b | 8b)
-bash pipeline/fine_tune_h1/pack.sh 8b
+bash pipeline/fine_tune/pack.sh 8b
 
 # Загрузка на удалённый GPU-инстанс
 scp vast_8b_package.tar.gz root@<HOST>:/workspace/

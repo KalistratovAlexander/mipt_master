@@ -149,7 +149,7 @@ python3 "$WORKSPACE/evaluation/evaluate_unified.py" \
     2>&1 | tee "$RUN_DIR/eval_unified.log"
 
 # --- Eval 3: learning curve — Recall@10 on title_to_sid per snapshot --------
-# 6 snapshots × N=1000 per §3.2.7 of thesis/h2_metrics_plan.md.
+# 6 snapshots × N=1000 (learning curve).
 echo ">>> [$(date +%T)] Evaluating learning curve (Recall@10 per snapshot)"
 mkdir -p "$RUN_DIR/learning_curve"
 for snap in "$STAGE2_OUT/snapshots"/step-*; do

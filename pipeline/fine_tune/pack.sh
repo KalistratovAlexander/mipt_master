@@ -4,7 +4,7 @@ set -euo pipefail
 # Pack vast.ai training package for Qwen3 small models (0.6B / 1.8B / 4B)
 # Creates vast_<MODEL>_package.tar.gz with the correct /workspace structure
 #
-# Usage: cd mipt_master && bash pipeline/fine_tune_h1/pack.sh [0.6b|1.8b|4b]
+# Usage: cd mipt_master && bash pipeline/fine_tune/pack.sh [0.6b|1.8b|4b]
 # Default: 1.8b
 
 MODEL="${1:-1.8b}"

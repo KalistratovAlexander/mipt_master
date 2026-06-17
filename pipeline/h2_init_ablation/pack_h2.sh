@@ -8,7 +8,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-FT_DIR="$PROJECT_DIR/pipeline/fine_tune_h1"
+FT_DIR="$PROJECT_DIR/pipeline/fine_tune"
 EVAL_DIR="$PROJECT_DIR/pipeline/evaluation"
 OUT="$PROJECT_DIR/h2_vast_package.tar.gz"
 

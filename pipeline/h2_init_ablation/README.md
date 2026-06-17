@@ -1,8 +1,8 @@
 # H2 — 4-way ablation init-сигнала для новых SID-токенов
 
 **Backbone:** Qwen3-0.6B (tied embeddings, hidden_dim=1024).
-**Датасет:** Amazon Pet Supplies (SID-каталог переиспользуется из `pipeline/fine_tune_h1/`).
-**Гипотеза:** см. `thesis/chapter_2/3_coldstart_and_decoding.md` §2.3.5, `thesis/analysis_plan.md` §3.5.
+**Датасет:** Amazon Pet Supplies (SID-каталог переиспользуется из `pipeline/fine_tune/`).
+**Гипотеза:** способ инициализации эмбеддингов добавленных токенов влияет на качество (сравнение 4 способов при равной норме Фробениуса).
 
 ## Arms
 
@@ -28,8 +28,6 @@
 - **Pre-registration:** `artifacts/h2_init_scales.json` коммитится ДО первого запуска.
 
 ## Структура
-
-Pre-registered план метрик: `thesis/h2_metrics_plan.md`.
 
 ```
 h2_init_ablation/

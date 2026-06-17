@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """H2 transversal diagnostics — geometry of SID-block embeddings after Stage 2.
 
-Computes 4 diagnostic metrics on final-checkpoint weights (§3.1 of thesis/h2_metrics_plan.md):
+Computes 4 diagnostic metrics on final-checkpoint weights:
   1. Pairwise cosine between arms (same SID, different arms, paired by seed).
   2. Linear CKA between arms (rotation-invariant sibling of #1).
   3. Effective rank of the SID block: exp(H(σ²_norm)) via SVD.
