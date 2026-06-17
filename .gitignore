@@ -46,8 +46,9 @@ env/
 .DS_Store
 Thumbs.db
 
-# Presentation (private)
-presentation/
-
 # Claude Code
 .claude/
+
+# Presentation (private)
+presentation/
+research/presentation/.venv_pptx/
