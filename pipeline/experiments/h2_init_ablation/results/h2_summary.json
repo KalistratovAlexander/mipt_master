@@ -1,0 +1,100 @@
+{
+  "_note": "Compact H2 (embedding-init ablation) summary derived from the per-run evaluation artifacts. Primary metric and per-arm values are from the unified evaluator (title->SID Recall@10 on the full identifier); confirmatory contrasts are paired bootstrap (m=3). Full per-run outputs: runs/arm_<X>_seed_<S>/results_unified.json.",
+  "protocol": {
+    "arms": [
+      "A",
+      "B",
+      "C",
+      "D"
+    ],
+    "seeds": [
+      42,
+      43,
+      44
+    ],
+    "primary_metric": "Recall@10 (ABCD) on title_to_sid",
+    "contrasts": [
+      [
+        "A",
+        "C"
+      ],
+      [
+        "A",
+        "D"
+      ],
+      [
+        "C",
+        "D"
+      ]
+    ],
+    "bonferroni_m": 3,
+    "alpha_corrected": 0.01667,
+    "n_bootstrap": 10000,
+    "control_arm": "B"
+  },
+  "per_arm": {
+    "A": {
+      "recall@10_ABCD_title": 0.01,
+      "cosine_sim_title": 0.4639,
+      "perplexity_wikitext2": {
+        "mean": 473.37,
+        "degradation_x": 21.1
+      },
+      "effective_rank": 338.8,
+      "rsa_pearson": 0.0368
+    },
+    "B": {
+      "recall@10_ABCD_title": 0.0113,
+      "cosine_sim_title": 0.4208,
+      "perplexity_wikitext2": {
+        "mean": 527.67,
+        "degradation_x": 23.5
+      },
+      "effective_rank": 478.1,
+      "rsa_pearson": 0.0265
+    },
+    "C": {
+      "recall@10_ABCD_title": 0.0157,
+      "cosine_sim_title": 0.4938,
+      "perplexity_wikitext2": {
+        "mean": 886.58,
+        "degradation_x": 39.5
+      },
+      "effective_rank": 250.1,
+      "rsa_pearson": 0.0817
+    },
+    "D": {
+      "recall@10_ABCD_title": 0.01,
+      "cosine_sim_title": 0.4453,
+      "perplexity_wikitext2": {
+        "mean": 2754.28,
+        "degradation_x": 122.7
+      },
+      "effective_rank": 245.8,
+      "rsa_pearson": 0.0763
+    }
+  },
+  "contrasts": {
+    "A_vs_C": {
+      "mean_diff": -0.006333333333333333,
+      "ci_lo": -0.010666666666666666,
+      "ci_hi": -0.0026666666666666666,
+      "p_value": 0.0002,
+      "significant": true
+    },
+    "A_vs_D": {
+      "mean_diff": 0.0006666666666666666,
+      "ci_lo": -0.0023333333333333335,
+      "ci_hi": 0.0036666666666666666,
+      "p_value": 0.6964,
+      "significant": false
+    },
+    "C_vs_D": {
+      "mean_diff": 0.007,
+      "ci_lo": 0.003,
+      "ci_hi": 0.011333333333333334,
+      "p_value": 0.0,
+      "significant": true
+    }
+  }
+}

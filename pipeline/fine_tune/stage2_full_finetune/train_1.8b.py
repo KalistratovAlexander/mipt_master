@@ -361,7 +361,7 @@ def main():
     p.add_argument("--lr", type=float, default=2e-5)
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--grad-accum", type=int, default=2)
-    p.add_argument("--epochs", type=int, default=3)
+    p.add_argument("--epochs", type=int, default=1)
     p.add_argument("--max-steps", type=int, default=-1,
                    help="Override total steps (-1 = use --epochs). Use for smoke tests.")
     p.add_argument("--warmup-ratio", type=float, default=0.03)
