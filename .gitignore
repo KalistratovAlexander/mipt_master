@@ -52,3 +52,6 @@ Thumbs.db
 # Presentation (private)
 presentation/
 research/presentation/.venv_pptx/
+
+# Local scratch (moved clutter, not part of the repo)
+_local/
