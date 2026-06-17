@@ -1,4 +1,4 @@
-# Stage 2: Full Fine-tuning (Qwen3-1.8B)
+# Stage 2: Full Fine-tuning (Qwen3-1.7B)
 
 Full-parameter fine-tuning of the vocab-expanded model from Stage 1.
 All 1.72B parameters are trainable.

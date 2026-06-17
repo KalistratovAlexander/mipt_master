@@ -99,7 +99,7 @@ def _paired_bootstrap(
 
     lo, hi = np.quantile(boot, [alpha / 2, 1 - alpha / 2])
     # Two-sided p via achieved significance level
-    p_two_sided = 2.0 * min(float((boot >= 0).mean()), float((boot <= 0).mean()))
+    p_two_sided = min(1.0, 2.0 * min(float((boot >= 0).mean()), float((boot <= 0).mean())))
     return {
         "mean_diff": observed,
         "ci_lo": float(lo),

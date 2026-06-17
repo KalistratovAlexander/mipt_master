@@ -1,6 +1,6 @@
-# Stage 1: Vocabulary Expansion (Qwen3-1.8B)
+# Stage 1: Vocabulary Expansion (Qwen3-1.7B)
 
-Adds 1027 SID tokens to Qwen3-1.8B vocabulary and trains **only** their embeddings.
+Adds 1027 SID tokens to the Qwen3-1.7B vocabulary and trains **only** their embeddings.
 All other parameters are frozen (~0.3% trainable).
 
 ## Tokens added
@@ -37,7 +37,7 @@ tail -f train_1.8b.log
 | max_steps | 2000 | ~2 epochs over 64K samples |
 | weight_decay | 0.0 | L2 kills new tokens before they learn |
 | optimizer | adamw_torch_fused | CUDA-fused, fast |
-| torch.compile | yes | ~2x after JIT warmup |
+| torch.compile | off | run scripts pass `--no-torch-compile` |
 
 ## Output
 
