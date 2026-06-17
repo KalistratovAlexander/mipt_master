@@ -72,8 +72,10 @@ pipeline/                          ML-пайплайн
 
 models/                            Обученные модели (не отслеживаются в git, доступны на HuggingFace)
   rqvae/                           Чекпоинт RQ-VAE — huggingface.co/kalistratov/rqvae-pet-supplies
-  qwen3_1.8b_sid/                  Дообученная Qwen3-1.8B — huggingface.co/kalistratov/qwen3-1.8b-semantic-ids
-  qwen3_8b_sid/                    Дообученная Qwen3-8B — huggingface.co/kalistratov/qwen3-8b-semantic-ids
+  qwen3-0.6b-sid/                  Дообученная Qwen3-0.6B — huggingface.co/kalistratov/qwen3-0.6b-sid-pet-1ep-seed42
+  qwen3-1.7b-sid/                  Дообученная Qwen3-1.7B — huggingface.co/kalistratov/qwen3-1.7b-sid-pet-1ep-seed42
+  qwen3-4b-sid/                    Дообученная Qwen3-4B — huggingface.co/kalistratov/qwen3-4b-sid-pet-1ep-seed42
+  qwen3-8b-sid/                    Дообученная Qwen3-8B — huggingface.co/kalistratov/qwen3-8b-sid-pet-1ep-seed42
 ```
 
 ## Воспроизведение
@@ -118,6 +120,6 @@ bash stage2/run.sh    # Stage 2: ~10 часов
 
 ```bash
 python pipeline/evaluation/evaluate_unified.py \
-    --model-path models/qwen3_8b_sid \
+    --model-path kalistratov/qwen3-8b-sid-pet-1ep-seed42 \
     --data-dir data
 ```

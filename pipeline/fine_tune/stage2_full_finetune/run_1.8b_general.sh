@@ -1,9 +1,10 @@
 #!/bin/bash
 set -euo pipefail
 
-# Stage 2: Qwen3-1.8B full fine-tuning WITH reasoning data mixing
+# Stage 2: Qwen3-1.7B full fine-tuning WITH reasoning data mixing
 #
-# Hypothesis H2: Does reasoning data mixing improve SID prediction?
+# Auxiliary variant (not a pre-registered hypothesis): does reasoning data
+# mixing improve SID prediction?
 # Mix: 75% SID conversations + 25% reasoning SFT data
 #   (OpenMathReasoning 60%, OpenCodeReasoning 20%, reasoning-v1 20%)
 #

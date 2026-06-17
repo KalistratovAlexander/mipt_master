@@ -45,14 +45,14 @@ bash pipeline/fine_tune/pack.sh 8b   # размер: 0.6b | 1.8b | 4b | 8b
 ### 2. Upload to vast.ai
 
 ```bash
-scp -P <PORT> vast_training_package.tar.gz root@<HOST>:/workspace/
+scp -P <PORT> vast_8b_package.tar.gz root@<HOST>:/workspace/
 ```
 
 ### 3. Unpack on server
 
 ```bash
 cd /workspace
-tar xf vast_training_package.tar.gz
+tar xf vast_8b_package.tar.gz
 ```
 
 This creates:

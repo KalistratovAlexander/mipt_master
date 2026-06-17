@@ -31,7 +31,7 @@ CATALOG=data/embeds/Pet_Supplies_items_with_semantic_ids.parquet
 TRAIN_SEQ=data/sequences/Pet_Supplies_sequences_with_sid_train.parquet
 
 MODEL_0P6B=kalistratov/qwen3-0.6b-sid-pet-1ep-seed42
-MODEL_1P7B=kalistratov/qwen3-1.8b-sid-pet-1ep-seed42
+MODEL_1P7B=kalistratov/qwen3-1.7b-sid-pet-1ep-seed42
 MODEL_4B=kalistratov/qwen3-4b-sid-pet-1ep-seed42
 MODEL_8B=kalistratov/qwen3-8b-sid-pet-1ep-seed42
 BASE_0P6B=Qwen/Qwen3-0.6B
