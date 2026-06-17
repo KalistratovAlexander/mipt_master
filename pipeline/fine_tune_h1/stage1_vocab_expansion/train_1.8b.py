@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Stage 1: Vocabulary expansion for Qwen3-8B with Semantic IDs.
+"""Stage 1: Vocabulary expansion for Qwen3-1.8B with Semantic IDs.
 
 Adds 1027 SID tokens to vocabulary and trains ONLY their embeddings.
-All other params frozen, but gradient flows through all 32 layers.
-Qwen3-8B has untied embeddings (input != output projection).
+All other params frozen. Qwen3-1.8B has tied embeddings (input == output).
 
-8B-specific: batch=16, grad_accum=4, gradient_checkpointing=True.
+1.8B-specific: batch=64, no gradient_checkpointing.
 
 Based on OpenOneRec Stage 1 (arxiv:2512.24762).
 """
@@ -17,11 +16,15 @@ from pathlib import Path
 
 import numpy as np
 import torch
+import datasets
 from datasets import load_dataset
+
+datasets.disable_caching()
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     Trainer,
+    TrainerCallback,
     TrainingArguments,
 )
 
@@ -30,7 +33,7 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)-5s | %(message)s",
     datefmt="%H:%M:%S",
 )
-log = logging.getLogger("stage1-8b")
+log = logging.getLogger("stage1-1.8b")
 
 _THINK_BLOCK = "<think>\n\n</think>\n\n"
 
@@ -108,16 +111,51 @@ def make_sid_tokens() -> list[str]:
 
 
 def _init_new_rows(weight: torch.Tensor, n_new: int) -> None:
-    """Initialize last n_new rows from N(mean, std) of existing embeddings."""
-    existing = weight[:-n_new]
+    """Initialize last n_new rows from MVN(mean, full_cov) of existing rows.
+
+    OpenOneRec paper §4.2: Cholesky on full covariance with ridge regularization
+    (1e-4 × mean diag) for numerical stability. FP32 throughout.
+    """
+    existing = weight[:-n_new].float()
     mean = existing.mean(dim=0)
-    std = existing.std(dim=0).clamp(min=1e-6)
-    weight[-n_new:] = mean + torch.randn(
-        n_new, weight.shape[1], dtype=weight.dtype, device=weight.device
-    ) * std
+    centered = existing - mean
+    cov = (centered.T @ centered) / (existing.shape[0] - 1)
+    ridge = 1e-4 * cov.diagonal().mean()
+    cov = cov + ridge * torch.eye(cov.shape[0], device=cov.device, dtype=torch.float32)
+    L = torch.linalg.cholesky(cov)
+    z = torch.randn(n_new, weight.shape[1], device=weight.device, dtype=torch.float32)
+    weight[-n_new:] = (mean + z @ L.T).to(weight.dtype)
 
 
-def extend_vocabulary(model, tokenizer) -> int:
+def _init_h3(model, n_new: int, h3: dict) -> None:
+    """H3 ablation init. Dispatches to pipeline/h3_init_ablation/init_strategies."""
+    import sys
+    sys.path.insert(0, h3["module_path"])
+    from init_strategies import apply_init_to_model  # noqa: E402
+
+    codebook = torch.load(h3["codebook_path"], map_location="cpu") if h3["arm"] == "D" else None
+    titles = None
+    if h3["arm"] == "C":
+        with open(h3["title_map_path"]) as f:
+            titles = json.load(f)
+
+    apply_init_to_model(
+        model=model,
+        arm=h3["arm"],
+        seed=h3["seed"],
+        target_frobenius_ctrl=h3["target_frobenius_ctrl"],
+        target_frobenius_sid=h3["target_frobenius_sid"],
+        rqvae_codebook=codebook,
+        title_token_ids_per_sid=titles,
+    )
+    log.info(
+        f"H3 init: arm={h3['arm']} seed={h3['seed']} "
+        f"target_ctrl={h3['target_frobenius_ctrl']:.6f} "
+        f"target_sid={h3['target_frobenius_sid']:.6f}"
+    )
+
+
+def extend_vocabulary(model, tokenizer, h3: dict | None = None) -> int:
     tokens = make_sid_tokens()
     n_before = len(tokenizer)
     tokenizer.add_tokens(tokens, special_tokens=True)
@@ -129,15 +167,17 @@ def extend_vocabulary(model, tokenizer) -> int:
     model.resize_token_embeddings(len(tokenizer))
 
     with torch.no_grad():
-        in_emb = model.get_input_embeddings()
-        _init_new_rows(in_emb.weight, n_new)
-
-        out_emb = model.get_output_embeddings()
-        if out_emb is not None and out_emb.weight is not in_emb.weight:
-            _init_new_rows(out_emb.weight, n_new)
-            log.info(f"Untied: both matrices initialized ({n_new} tokens)")
+        if h3 is not None:
+            _init_h3(model, n_new, h3)
         else:
-            log.info(f"Tied: single matrix initialized ({n_new} tokens)")
+            in_emb = model.get_input_embeddings()
+            _init_new_rows(in_emb.weight, n_new)
+            out_emb = model.get_output_embeddings()
+            if out_emb is not None and out_emb.weight is not in_emb.weight:
+                _init_new_rows(out_emb.weight, n_new)
+                log.info(f"Untied: both matrices initialized ({n_new} tokens)")
+            else:
+                log.info(f"Tied: single matrix initialized ({n_new} tokens)")
 
     log.info(f"Vocab: {n_before:,} -> {len(tokenizer):,} (+{n_new} SID tokens)")
     return n_new
@@ -201,23 +241,75 @@ def load_and_tokenize(
 
 
 # ---------------------------------------------------------------------------
+# Training monitor callbacks
+# ---------------------------------------------------------------------------
+
+class TrainingMonitorCallback(TrainerCallback):
+    """NaN loss detection, grad_norm warning, per-log VRAM reporting."""
+
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        if not logs:
+            return
+        loss = logs.get("loss")
+        grad_norm = logs.get("grad_norm")
+        if loss is not None and loss != loss:
+            raise RuntimeError(f"NaN loss at step {state.global_step} — aborting")
+        if loss is not None and state.global_step <= 2 and loss < 0.01:
+            log.warning(f"Loss={loss:.4f} at step {state.global_step} — verify label masking")
+        if grad_norm is not None and grad_norm > 10.0:
+            log.warning(f"grad_norm={grad_norm:.2f} at step {state.global_step} (>10 threshold)")
+        if torch.cuda.is_available():
+            vram_gb = torch.cuda.max_memory_allocated() / 1e9
+            log.info(f"[step {state.global_step}] VRAM={vram_gb:.1f} GB")
+
+
+class EmbeddingMonitorCallback(TrainerCallback):
+    """Tracks SID embedding norms vs existing tokens — catches collapse or frozen embeddings."""
+
+    def __init__(self, model, n_new: int, log_every: int = 50):
+        self.n_new = n_new
+        self.log_every = log_every
+        with torch.no_grad():
+            W = model.get_input_embeddings().weight
+            self._old_mean = W[:-n_new].float().norm(dim=-1).mean().item()
+            self._init_new_mean = W[-n_new:].float().norm(dim=-1).mean().item()
+        log.info(
+            f"EmbeddingMonitor init: new_norm_mean={self._init_new_mean:.3f} "
+            f"old_norm_mean={self._old_mean:.3f}"
+        )
+
+    def on_step_end(self, args, state, control, model=None, **kwargs):
+        if model is None or state.global_step == 0 or state.global_step % self.log_every != 0:
+            return
+        with torch.no_grad():
+            W = model.get_input_embeddings().weight
+            new_norms = W[-self.n_new:].float().norm(dim=-1)
+            old_mean = W[:-self.n_new].float().norm(dim=-1).mean().item()
+        log.info(
+            f"[step {state.global_step}] emb_new: "
+            f"mean={new_norms.mean():.3f} min={new_norms.min():.3f} max={new_norms.max():.3f} "
+            f"| emb_old_mean={old_mean:.3f}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 def main():
-    p = argparse.ArgumentParser(description="Stage 1: Vocab expansion (Qwen3-8B)")
-    p.add_argument("--model-name", default="Qwen/Qwen3-8B")
+    p = argparse.ArgumentParser(description="Stage 1: Vocab expansion (Qwen3-1.8B)")
+    p.add_argument("--model-name", default="Qwen/Qwen3-1.7B")
     p.add_argument("--train-file", required=True)
     p.add_argument("--val-file", default=None)
-    p.add_argument("--output-dir", default="output/stage1_8b")
+    p.add_argument("--output-dir", default="output/stage1_1.8b")
 
     p.add_argument("--max-seq-length", type=int, default=512)
     p.add_argument("--max-train-samples", type=int, default=64_000)
     p.add_argument("--max-val-samples", type=int, default=2_000)
 
     p.add_argument("--lr", type=float, default=1e-3)
-    p.add_argument("--batch-size", type=int, default=16)
-    p.add_argument("--grad-accum", type=int, default=4)
+    p.add_argument("--batch-size", type=int, default=64)
+    p.add_argument("--grad-accum", type=int, default=1)
     p.add_argument("--max-steps", type=int, default=2000)
     p.add_argument("--warmup-steps", type=int, default=100)
     p.add_argument("--seed", type=int, default=42)
@@ -227,7 +319,48 @@ def main():
     p.add_argument("--save-steps", type=int, default=500)
     p.add_argument("--eval-steps", type=int, default=200)
     p.add_argument("--no-wandb", action="store_true")
+
+    # --- H3 ablation ----------------------------------------------------------
+    # Default 'original' preserves the existing 1.7B training path byte-identical.
+    p.add_argument("--init-strategy", choices=["original", "A", "B", "C", "D"],
+                   default="original",
+                   help="Embedding init for new SID tokens. 'original' = legacy diag-std; "
+                        "A/B/C/D dispatch to pipeline/h3_init_ablation/init_strategies.")
+    p.add_argument("--init-seed", type=int, default=None,
+                   help="Seed for H3 init sampling. Defaults to --seed when omitted.")
+    p.add_argument("--target-frobenius-ctrl", type=float, default=None,
+                   help="Pre-registered Frobenius target for the 3 control-token rows "
+                        "(required when --init-strategy != original).")
+    p.add_argument("--target-frobenius-sid", type=float, default=None,
+                   help="Pre-registered Frobenius target for the 1024 SID-token rows "
+                        "(required when --init-strategy != original).")
+    p.add_argument("--rqvae-codebook-path", default=None,
+                   help="Path to RQ-VAE codebook .pt (required for arm D).")
+    p.add_argument("--title-map-path", default=None,
+                   help="Path to title_token_ids_per_sid.json (required for arm C).")
+    p.add_argument("--h3-module-path", default=None,
+                   help="Path to pipeline/h3_init_ablation dir (auto-detected from script location if omitted).")
     args = p.parse_args()
+
+    h3 = None
+    if args.init_strategy != "original":
+        if args.target_frobenius_ctrl is None or args.target_frobenius_sid is None:
+            p.error("--target-frobenius-ctrl and --target-frobenius-sid are required "
+                    "when --init-strategy != original")
+        module_path = args.h3_module_path or str(
+            Path(__file__).resolve().parents[2] / "h3_init_ablation"
+        )
+        if not Path(module_path).exists():
+            p.error(f"H3 module dir not found: {module_path}; pass --h3-module-path")
+        h3 = {
+            "arm": args.init_strategy,
+            "seed": args.init_seed if args.init_seed is not None else args.seed,
+            "target_frobenius_ctrl": args.target_frobenius_ctrl,
+            "target_frobenius_sid": args.target_frobenius_sid,
+            "module_path": module_path,
+            "codebook_path": args.rqvae_codebook_path,
+            "title_map_path": args.title_map_path,
+        }
 
     log.info(f"Loading {args.model_name}")
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
@@ -241,6 +374,13 @@ def main():
         attn_impl = "sdpa"
     log.info(f"Attention: {attn_impl}")
 
+    try:
+        import liger_kernel  # noqa: F401
+        use_liger = True
+        log.info("liger-kernel detected: fused kernels enabled")
+    except ImportError:
+        use_liger = False
+
     model = AutoModelForCausalLM.from_pretrained(
         args.model_name,
         torch_dtype=torch.bfloat16,
@@ -248,7 +388,7 @@ def main():
         trust_remote_code=True,
     )
 
-    n_new = extend_vocabulary(model, tokenizer)
+    n_new = extend_vocabulary(model, tokenizer, h3=h3)
     freeze_except_embeddings(model)
 
     template_ids, im_end_id = _get_masking_ids(tokenizer)
@@ -267,30 +407,40 @@ def main():
     )
 
     use_compile = not args.no_torch_compile
+    callbacks = [
+        TrainingMonitorCallback(),
+        EmbeddingMonitorCallback(model, n_new),
+    ]
     trainer = Trainer(
         model=model,
         processing_class=tokenizer,
         train_dataset=train_ds,
         eval_dataset=val_ds,
         data_collator=DataCollatorForCausalLM(tokenizer),
+        callbacks=callbacks,
         args=TrainingArguments(
             output_dir=args.output_dir,
             per_device_train_batch_size=args.batch_size,
             gradient_accumulation_steps=args.grad_accum,
             learning_rate=args.lr,
-            lr_scheduler_type="cosine",
+            lr_scheduler_type="cosine_with_min_lr",
+            lr_scheduler_kwargs={"min_lr_rate": 0.1},
             warmup_steps=args.warmup_steps,
             max_steps=args.max_steps,
             # weight_decay=0 for embeddings: L2 pulls ALL rows toward zero each step,
             # including tokens absent from batch — kills new SID embeddings before they learn
             weight_decay=0.0,
             bf16=True,
-            gradient_checkpointing=True,
-            gradient_checkpointing_kwargs={"use_reentrant": False},
+            tf32=True,
+            use_liger_kernel=use_liger,
+            gradient_checkpointing=False,
+            adam_beta2=0.95,
             optim="adamw_torch_fused",
             torch_compile=use_compile,
-            dataloader_num_workers=4,
+            dataloader_num_workers=8,
             dataloader_pin_memory=True,
+            dataloader_prefetch_factor=4,
+            dataloader_persistent_workers=True,
             logging_steps=args.logging_steps,
             save_steps=args.save_steps,
             save_total_limit=2,
@@ -341,6 +491,10 @@ def main():
         "lr": args.lr,
         "batch_size": args.batch_size,
         "sid_embedding_shape": list(sid_emb.shape),
+        "init_strategy": args.init_strategy,
+        "init_seed": args.init_seed if args.init_seed is not None else args.seed,
+        "target_frobenius_ctrl": args.target_frobenius_ctrl,
+        "target_frobenius_sid": args.target_frobenius_sid,
     }, indent=2))
     log.info(f"Saved to {final} (SID embeddings: {sid_emb.shape})")
 

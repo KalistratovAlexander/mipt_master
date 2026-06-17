@@ -417,6 +417,9 @@ class SIDBeamMetrics:
     per_sample_hit10: list = field(default_factory=list)
     per_sample_rr: list = field(default_factory=list)
     per_sample_ndcg: list = field(default_factory=list)
+    # Per-sample beam outputs for post-hoc B.7 (catalog hit per task) and B.8 (stratified head/tail)
+    per_sample_beam_preds: list = field(default_factory=list)
+    per_sample_gold: list = field(default_factory=list)
     # Hierarchical: hit@K at each level
     hier_hit5: dict = field(default_factory=lambda: {"A": [], "AB": [], "ABC": [], "ABCD": []})
     hier_hit10: dict = field(default_factory=lambda: {"A": [], "AB": [], "ABC": [], "ABCD": []})
@@ -424,6 +427,10 @@ class SIDBeamMetrics:
 
     def update(self, beam_preds: List[Optional[Tuple]], gold: Optional[Tuple]):
         self.total += 1
+        self.per_sample_beam_preds.append(
+            [list(p) if p is not None else None for p in beam_preds[:10]]
+        )
+        self.per_sample_gold.append(list(gold) if gold is not None else None)
         if gold is None:
             for lst in [self.per_sample_hit1, self.per_sample_hit5, self.per_sample_hit10,
                         self.per_sample_rr, self.per_sample_ndcg]:
@@ -516,6 +523,11 @@ class SIDBeamMetrics:
                 m, lo, hi = bootstrap_ci(values)
                 sub[level_name] = round(m, 4)
             result[metric_name] = sub
+
+        # Per-sample arrays (for post-hoc B.7 catalog-hit and B.8 head/tail)
+        result["per_sample_hit@10"] = list(self.per_sample_hit10)
+        result["per_sample_gold"] = list(self.per_sample_gold)
+        result["per_sample_beam_preds"] = list(self.per_sample_beam_preds)
 
         return result
 
@@ -689,6 +701,14 @@ class TextGenMetrics:
         }
         if self.cosine_sim_scores:
             result["cosine_sim"] = _mean_ci(self.cosine_sim_scores)
+
+        per_sample = {
+            "rouge_l": [float(x) for x in self.rouge_l_scores],
+            "char_f1": [float(x) for x in self.char_f1_scores],
+        }
+        if self.cosine_sim_scores:
+            per_sample["cosine_sim"] = [float(x) for x in self.cosine_sim_scores]
+        result["per_sample"] = per_sample
 
         if self.cat_scored > 0:
             cs = self.cat_scored
@@ -951,14 +971,16 @@ def resolve_data_files(data_dir: Path) -> Tuple[Path, Path, Optional[Path]]:
 def build_catalog_mapping(
     sid_file: Path,
     items_file: Optional[Path],
-) -> Tuple[Dict[Tuple, Dict[str, str]], Dict[int, str], Set[str]]:
+) -> Tuple[Dict[Tuple, Dict[str, str]], Dict[int, str], Set[str], Set[Tuple[str, str, str, str]]]:
     """Build:
     1. (A,B,C) -> {title, description_text, features_text, categories_text}
     2. A_level -> dominant category keyword
-    3. Set of all valid SID token strings
+    3. Set of all valid SID token strings (sid_tokens column)
+    4. Set of all valid (A,B,C,D) tuples-of-strings (matches per_sample_gold format)
     """
     sids_df = pl.read_parquet(str(sid_file))
     catalog_sids: Set[str] = set()
+    catalog_sids_tuples: Set[Tuple[str, str, str, str]] = set()
     a_level_category: Dict[int, str] = {}
     catalog_map: Dict[Tuple, Dict[str, str]] = {}
 
@@ -966,6 +988,9 @@ def build_catalog_mapping(
         sid = row.get("sid_tokens")
         if sid:
             catalog_sids.add(sid)
+        a, b, c, d = row.get("A"), row.get("B"), row.get("C"), row.get("D")
+        if a is not None and b is not None and c is not None and d is not None:
+            catalog_sids_tuples.add((str(int(a)), str(int(b)), str(int(c)), str(int(d))))
 
     if items_file and items_file.exists():
         items_df = pl.read_parquet(str(items_file))
@@ -1021,7 +1046,115 @@ def build_catalog_mapping(
     log.info(f"Catalog: {len(catalog_sids):,} SIDs, {len(catalog_map):,} mapped items, "
              f"{len(a_level_category)} A-levels with category")
 
-    return catalog_map, a_level_category, catalog_sids
+    return catalog_map, a_level_category, catalog_sids, catalog_sids_tuples
+
+
+def resolve_train_sequences_file(data_dir: Path) -> Optional[Path]:
+    """Locate the train sequences parquet for item-popularity stratification.
+
+    Looked up in (in order): data/sequences/<prefix>_sequences_with_sid_train.parquet,
+    then walking up to find data/sequences/. Returns None if not found.
+    """
+    candidates = [
+        data_dir / "sequences" / "Pet_Supplies_sequences_with_sid_train.parquet",
+        data_dir.parent / "sequences" / "Pet_Supplies_sequences_with_sid_train.parquet",
+    ]
+    for p in candidates:
+        if p.exists():
+            return p
+    return None
+
+
+def build_head_tail_sids(
+    train_seq_file: Path,
+    pct: float = 0.20,
+) -> Tuple[Set[Tuple[str, str, str, str]], Set[Tuple[str, str, str, str]], int]:
+    """Build (head, tail) sets of (A,B,C,D) SID-tuples ranked by item-frequency in
+    train sequences. Top `pct` of unique SIDs by occurrence count = head;
+    bottom `pct` = tail. Returns (head_sids, tail_sids, n_unique_sids)."""
+    seq_df = pl.read_parquet(str(train_seq_file))
+    counts: Counter = Counter()
+    for sid_seq in seq_df["sid_sequence"].to_list():
+        if not sid_seq:
+            continue
+        for sid_str in sid_seq:
+            parsed = parse_sid(sid_str)
+            if parsed is not None:
+                counts[parsed] += 1
+    if not counts:
+        return set(), set(), 0
+    n_unique = len(counts)
+    n_split = max(int(n_unique * pct), 1)
+    sorted_desc = sorted(counts.keys(), key=lambda s: -counts[s])
+    head_sids = set(sorted_desc[:n_split])
+    tail_sids = set(sorted_desc[-n_split:])
+    return head_sids, tail_sids, n_unique
+
+
+def compute_catalog_hit_top1(
+    per_sample_beam_preds: List[List[Optional[List[str]]]],
+    catalog_sids_tuples: Set[Tuple[str, str, str, str]],
+) -> dict:
+    """Section A#7: % top-1 beam SID ∈ catalog (per task)."""
+    n = len(per_sample_beam_preds)
+    if n == 0:
+        return {"hit_rate": 0.0, "n_total": 0, "n_invalid_format": 0}
+    n_invalid = 0
+    n_hit = 0
+    for beams in per_sample_beam_preds:
+        if not beams or beams[0] is None:
+            n_invalid += 1
+            continue
+        if tuple(beams[0]) in catalog_sids_tuples:
+            n_hit += 1
+    return {
+        "hit_rate": round(n_hit / n, 4),
+        "n_total": n,
+        "n_invalid_format": n_invalid,
+    }
+
+
+def compute_coverage_at_10(
+    per_sample_beam_preds: List[List[Optional[List[str]]]],
+    catalog_size: int,
+) -> dict:
+    """Section G: |unique SIDs in top-10 beam over all prompts| / |catalog|."""
+    unique: Set[Tuple] = set()
+    for beams in per_sample_beam_preds:
+        for s in beams:
+            if s is not None:
+                unique.add(tuple(s))
+    return {
+        "coverage": round(len(unique) / catalog_size, 6) if catalog_size > 0 else 0.0,
+        "unique_sids": len(unique),
+        "catalog_size": catalog_size,
+        "n_prompts": len(per_sample_beam_preds),
+    }
+
+
+def compute_stratified_recall(
+    per_sample_hit10: List[float],
+    per_sample_gold: List[Optional[List[str]]],
+    head_sids: Set[Tuple[str, str, str, str]],
+    tail_sids: Set[Tuple[str, str, str, str]],
+) -> dict:
+    """Section A#8/9: split per-prompt hit@10 by gold ∈ head/tail (top/bot 20% by item-freq)."""
+    head_hits: List[float] = []
+    tail_hits: List[float] = []
+    for hit, gold in zip(per_sample_hit10, per_sample_gold):
+        if gold is None:
+            continue
+        g = tuple(gold)
+        if g in head_sids:
+            head_hits.append(hit)
+        elif g in tail_sids:
+            tail_hits.append(hit)
+    return {
+        "head_recall@10": round(float(np.mean(head_hits)), 4) if head_hits else None,
+        "tail_recall@10": round(float(np.mean(tail_hits)), 4) if tail_hits else None,
+        "n_head": len(head_hits),
+        "n_tail": len(tail_hits),
+    }
 
 
 def load_eval_data(
@@ -1313,6 +1446,7 @@ def benchmark_performance(
     max_new_tokens_text: int = 160,
     warmup_iters: int = 3,
     bench_iters: int = 20,
+    batch_size: int = 1,
 ) -> dict:
     """Benchmark inference performance: TTFT, TPS, E2E latency, GPU memory, power.
 
@@ -1323,6 +1457,10 @@ def benchmark_performance(
         max_new_tokens_text: max tokens for text generation
         warmup_iters: warmup iterations (not measured)
         bench_iters: measured iterations
+        batch_size: number of identical prompts per forward pass.
+            At batch_size=1 → single-user latency (D1-D6 in METRICS_FROZEN).
+            At batch_size=32 → production throughput (D7-D11). TPS metrics are
+            reported as aggregate (per_seq_tokens * batch_size / time).
 
     Returns:
         dict with performance metrics
@@ -1335,15 +1473,15 @@ def benchmark_performance(
         return {"error": "no CUDA device"}
 
     log.info(f"\n{'='*60}")
-    log.info("PERFORMANCE BENCHMARK")
+    log.info(f"PERFORMANCE BENCHMARK (batch_size={batch_size})")
     log.info(f"{'='*60}")
 
     prompt = prompts[0]  # Use first prompt as representative
-    inputs = tokenizer(prompt, return_tensors="pt").to(device)
+    inputs = tokenizer([prompt] * batch_size, return_tensors="pt", padding=True).to(device)
     input_len = inputs["input_ids"].shape[1]
-    log.info(f"Benchmark prompt length: {input_len} tokens")
+    log.info(f"Benchmark prompt length: {input_len} tokens (batch_size={batch_size})")
 
-    results = {}
+    results = {"batch_size": batch_size}
 
     # ---- GPU Memory: weights only ----
     torch.cuda.reset_peak_memory_stats(device)
@@ -1413,7 +1551,7 @@ def benchmark_performance(
 
     avg_out_tokens_sid = np.mean(output_tokens_sid)
     avg_e2e_sid = np.mean(e2e_greedy_sid)
-    tps_sid = avg_out_tokens_sid / (avg_e2e_sid / 1000) if avg_e2e_sid > 0 else 0
+    tps_sid = (avg_out_tokens_sid * batch_size) / (avg_e2e_sid / 1000) if avg_e2e_sid > 0 else 0
 
     results["e2e_greedy_sid_ms"] = {
         "mean": round(avg_e2e_sid, 1),
@@ -1423,7 +1561,7 @@ def benchmark_performance(
         "avg_output_tokens": round(avg_out_tokens_sid, 1),
         "n_iters": bench_iters,
     }
-    results["tps_sid"] = round(tps_sid, 1)
+    results["tps_sid"] = round(tps_sid, 1)  # aggregate at batch_size>1
     log.info(f"  E2E greedy SID: {avg_e2e_sid:.0f} ms, "
              f"TPS: {tps_sid:.1f} tok/s, "
              f"avg output: {avg_out_tokens_sid:.0f} tokens")
@@ -1432,7 +1570,7 @@ def benchmark_performance(
     log.info("Measuring E2E greedy text generation...")
     # Use a SID→text style prompt if possible, else same prompt with more tokens
     text_prompt = prompts[1] if len(prompts) > 1 else prompt
-    text_inputs = tokenizer(text_prompt, return_tensors="pt").to(device)
+    text_inputs = tokenizer([text_prompt] * batch_size, return_tensors="pt", padding=True).to(device)
 
     for _ in range(warmup_iters):
         _ = model.generate(**text_inputs, max_new_tokens=max_new_tokens_text,
@@ -1452,7 +1590,7 @@ def benchmark_performance(
 
     avg_out_tokens_text = np.mean(output_tokens_text)
     avg_e2e_text = np.mean(e2e_greedy_text)
-    tps_text = avg_out_tokens_text / (avg_e2e_text / 1000) if avg_e2e_text > 0 else 0
+    tps_text = (avg_out_tokens_text * batch_size) / (avg_e2e_text / 1000) if avg_e2e_text > 0 else 0
 
     results["e2e_greedy_text_ms"] = {
         "mean": round(avg_e2e_text, 1),
@@ -1589,6 +1727,8 @@ def evaluate_model(
     sid_batch_size: int = 8,         # batch size for SID task loop (batched beam)
     verbose_samples: int = 0,        # log first-N prompts/outputs across all SID tasks
     samples_per_task_text: Optional[int] = None,  # override only TEXT_GENERATION_TASKS
+    cosine_model: str = "sentence-transformers/all-MiniLM-L6-v2",
+    bench_batch_sizes: Optional[List[int]] = None,  # benchmark per batch size; default [1]
 ) -> dict:
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
@@ -1656,7 +1796,17 @@ def evaluate_model(
     log.info(f"Items: {items_file}")
 
     val_df = pl.read_parquet(str(val_file))
-    catalog_map, a_level_category, catalog_sids = build_catalog_mapping(sid_file, items_file)
+    catalog_map, a_level_category, catalog_sids, catalog_sids_tuples = build_catalog_mapping(sid_file, items_file)
+
+    # ---- Head/Tail sets from train sequences (for A#8/9 stratified Recall@10) ----
+    train_seq_file = resolve_train_sequences_file(data_path)
+    head_sids: Set[Tuple[str, str, str, str]] = set()
+    tail_sids: Set[Tuple[str, str, str, str]] = set()
+    if train_seq_file is not None:
+        head_sids, tail_sids, n_unique = build_head_tail_sids(train_seq_file, pct=0.20)
+        log.info(f"Head/Tail: {len(head_sids):,} head / {len(tail_sids):,} tail (of {n_unique:,} unique train SIDs)")
+    else:
+        log.warning("Train sequences not found — stratified Recall@10 (A#8/9) will be skipped")
 
     # ---- Perplexity ----
     ppl_result = {}
@@ -1683,13 +1833,20 @@ def evaluate_model(
                     bench_prompts.append(build_prompt(tokenizer, items[0]["prompt_msgs"]))
                     break
         if bench_prompts:
-            bench_result = benchmark_performance(
-                model, tokenizer, bench_prompts,
-                beam_size=beam_size,
-                max_new_tokens_sid=max_new_tokens_sid,
-                max_new_tokens_text=max_new_tokens_text,
-                bench_iters=bench_iters,
-            )
+            batch_sizes = bench_batch_sizes if bench_batch_sizes else [1]
+            device_obj = next(model.parameters()).device
+            for bs in batch_sizes:
+                if device_obj.type == "cuda":
+                    torch.cuda.empty_cache()
+                    torch.cuda.reset_peak_memory_stats(device_obj)
+                bench_result[f"batch_{bs}"] = benchmark_performance(
+                    model, tokenizer, bench_prompts,
+                    beam_size=beam_size,
+                    max_new_tokens_sid=max_new_tokens_sid,
+                    max_new_tokens_text=max_new_tokens_text,
+                    bench_iters=bench_iters,
+                    batch_size=bs,
+                )
     elif dry_run:
         log.info("DRY RUN: skipping performance benchmark")
 
@@ -1703,7 +1860,7 @@ def evaluate_model(
     sim_backend = None
     if not skip_cosine_sim:
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        sim_backend = SimilarityBackend(device=device)
+        sim_backend = SimilarityBackend(device=device, model_name=cosine_model)
 
     results = {
         "meta": {
@@ -1868,7 +2025,19 @@ def evaluate_model(
             }
             if decoding == "sampling" or beam_size > 1:
                 label = "sampling" if decoding == "sampling" else "beam"
-                task_result[label] = beam_metrics.to_dict()
+                beam_dict = beam_metrics.to_dict()
+                task_result[label] = beam_dict
+                # ---- Inline H1 frozen metrics (A#7, G, A#8/9) ----
+                if label == "beam":
+                    psbp = beam_dict.get("per_sample_beam_preds", [])
+                    psg = beam_dict.get("per_sample_gold", [])
+                    psh10 = beam_dict.get("per_sample_hit@10", [])
+                    task_result["catalog_hit_top1"] = compute_catalog_hit_top1(psbp, catalog_sids_tuples)
+                    task_result["coverage_at_10"] = compute_coverage_at_10(psbp, len(catalog_sids_tuples))
+                    if head_sids and tail_sids:
+                        task_result["stratified_recall_at_10"] = compute_stratified_recall(
+                            psh10, psg, head_sids, tail_sids
+                        )
             if intent_total > 0:
                 task_result["intent_match"] = {
                     "matched": intent_match_count,
@@ -2121,8 +2290,16 @@ if __name__ == "__main__":
     p.add_argument("--samples-per-task-text", type=int, default=None,
                    help="Override sample count for TEXT_GENERATION_TASKS only (sid_to_title, sid_to_category, sid_to_reasoning). "
                         "Does not affect SID prediction tasks. Useful when text tasks are slower and you want fewer samples there.")
+    p.add_argument("--cosine-model", default="sentence-transformers/all-MiniLM-L6-v2",
+                   help="HuggingFace model name for SentenceTransformer cosine_sim backend. "
+                        "Default = MiniLM (fast). H1 frozen spec uses 'Qwen/Qwen3-Embedding-0.6B'.")
+    p.add_argument("--bench-batch-size", default="1",
+                   help="CSV list of batch sizes for performance benchmark, e.g. '1,32'. "
+                        "Each value runs a separate benchmark; output stored as performance.batch_<N>. "
+                        "Default: '1' (single-user latency only).")
 
     args = p.parse_args()
+    bench_batch_sizes = [int(x.strip()) for x in args.bench_batch_size.split(",") if x.strip()]
 
     evaluate_model(
         model_path=args.model_path,
@@ -2148,4 +2325,6 @@ if __name__ == "__main__":
         sid_batch_size=args.sid_batch_size,
         verbose_samples=args.verbose_samples,
         samples_per_task_text=args.samples_per_task_text,
+        cosine_model=args.cosine_model,
+        bench_batch_sizes=bench_batch_sizes,
     )

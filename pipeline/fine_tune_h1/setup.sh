@@ -23,12 +23,15 @@ apt-get update -qq && apt-get install -y -qq build-essential python3-dev > /dev/
     ln -sf /usr/lib/x86_64-linux-gnu/libcuda.so.1 /usr/lib/x86_64-linux-gnu/libcuda.so 2>/dev/null || true
 
 pip3 install --upgrade pip -q
-pip3 install torch==2.5.0 --index-url https://download.pytorch.org/whl/cu121 -q
-pip3 install "transformers>=4.51.0" -q
-pip3 install trl datasets numpy bitsandbytes -q
+pip3 install torch==2.6.0 torchvision --index-url https://download.pytorch.org/whl/cu124 -q
+pip3 install "transformers>=4.51.0,<6" -q
+pip3 install trl datasets numpy bitsandbytes polars -q
+
+# Liger kernel (fused Triton ops — enables larger batch sizes in Stage 1)
+pip3 install liger-kernel -q
 
 # Unsloth (needed for Stage 2)
-pip3 install "unsloth[cu121-torch250] @ git+https://github.com/unslothai/unsloth.git" -q
+pip3 install "unsloth[cu124-torch260] @ git+https://github.com/unslothai/unsloth.git" -q
 pip3 uninstall torchao -y 2>/dev/null || true
 
 # Flash Attention 2 (optional, Ampere+ GPUs)

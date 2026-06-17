@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
-"""Stage 2: Full fine-tuning Qwen3-8B with Semantic IDs.
+"""Stage 2: Full fine-tuning Qwen3-1.8B with Semantic IDs.
 
 Unsloth (FastLanguageModel) for model loading + vanilla Trainer for training.
 Custom instruction masking, sequence packing, SID eval callback.
 
-Aligned with 1.8B pipeline for experimental consistency.
+Aligned with 8B pipeline for experimental consistency.
 Based on Eugene Yan's approach + OpenOneRec best practices.
-
-8B-specific: batch=16, grad_accum=8, gradient_checkpointing=True.
 """
 
 from unsloth import FastLanguageModel, is_bfloat16_supported  # isort: skip  # must be first
@@ -21,8 +19,13 @@ import time
 from pathlib import Path
 from typing import Optional
 
+import itertools
+
 import torch
-from datasets import Dataset, load_dataset
+import datasets
+from datasets import Dataset, concatenate_datasets, load_dataset
+
+datasets.disable_caching()
 from transformers import (
     Trainer,
     TrainerCallback,
@@ -34,7 +37,7 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)-5s | %(message)s",
     datefmt="%H:%M:%S",
 )
-log = logging.getLogger("stage2-8b")
+log = logging.getLogger("stage2-1.8b")
 
 _THINK_BLOCK = "<think>\n\n</think>\n\n"
 
@@ -282,6 +285,29 @@ class ModelSnapshotCallback(TrainerCallback):
 
 
 # ---------------------------------------------------------------------------
+# Training monitor callback
+# ---------------------------------------------------------------------------
+
+class TrainingMonitorCallback(TrainerCallback):
+    """NaN loss detection, grad_norm warning, per-log VRAM reporting."""
+
+    def on_log(self, args, state, control, logs=None, **kwargs):
+        if not logs:
+            return
+        loss = logs.get("loss")
+        grad_norm = logs.get("grad_norm")
+        if loss is not None and loss != loss:
+            raise RuntimeError(f"NaN loss at step {state.global_step} — aborting")
+        if loss is not None and state.global_step <= 2 and loss < 0.01:
+            log.warning(f"Loss={loss:.4f} at step {state.global_step} — verify label masking")
+        if grad_norm is not None and grad_norm > 10.0:
+            log.warning(f"grad_norm={grad_norm:.2f} at step {state.global_step} (>10 threshold)")
+        if torch.cuda.is_available():
+            vram_gb = torch.cuda.max_memory_allocated() / 1e9
+            log.info(f"[step {state.global_step}] VRAM={vram_gb:.1f} GB")
+
+
+# ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
 
@@ -318,11 +344,160 @@ def load_reco_dataset(
 
 
 # ---------------------------------------------------------------------------
+# General data mixing (reasoning SFT datasets)
+# ---------------------------------------------------------------------------
+
+# Supported reasoning datasets and their field mappings
+_REASONING_SOURCES = {
+    "nvidia/OpenMathReasoning": {
+        "split": "cot",           # chain-of-thought solutions
+        "user_field": "problem",
+        "assistant_field": "generated_solution",
+    },
+    "nvidia/OpenCodeReasoning": {
+        "config": "split_0",       # HF requires explicit config name
+        "split": "split_0",        # split name matches config name
+        "user_field": "input",
+        "assistant_field": "output",
+    },
+    "glaiveai/reasoning-v1-20m": {
+        "split": "train",
+        "user_field": "prompt",
+        "assistant_field": "response",
+    },
+}
+
+# Default proportions within the general mix (math-heavy, following OpenOneRec)
+_DEFAULT_MIX_WEIGHTS = {
+    "nvidia/OpenMathReasoning": 0.60,
+    "nvidia/OpenCodeReasoning": 0.20,
+    "glaiveai/reasoning-v1-20m": 0.20,
+}
+
+_THINK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
+
+
+def _strip_think(text: str) -> str:
+    """Remove <think>...</think> reasoning traces from responses."""
+    return _THINK_RE.sub("", text).strip()
+
+
+def _to_conversation(user_text: str, assistant_text: str) -> list[dict]:
+    """Convert a Q&A pair to chat format compatible with apply_chat_template."""
+    return [
+        {"role": "user", "content": user_text},
+        {"role": "assistant", "content": _strip_think(assistant_text)},
+    ]
+
+
+def load_general_dataset(
+    tokenizer, template_ids: list[int], im_end_id: int,
+    max_length: int, n_samples: int, seed: int,
+    sources: Optional[dict[str, float]] = None,
+) -> Dataset:
+    """Load reasoning SFT datasets, convert to conversations, tokenize with instruction masking.
+
+    Sources: dict of {hf_dataset_name: weight}. Weights are relative (normalized to sum=1).
+    Uses the same instruction masking as SID data for consistent loss computation.
+    """
+    sources = sources or _DEFAULT_MIX_WEIGHTS
+    total_weight = sum(sources.values())
+
+    all_rows = []
+    for source_name, weight in sources.items():
+        n = int(n_samples * weight / total_weight)
+        if n == 0:
+            continue
+
+        cfg = _REASONING_SOURCES.get(source_name)
+        if cfg is None:
+            log.warning(f"Unknown source {source_name!r}, skipping")
+            continue
+
+        hf_config = cfg.get("config")
+        log.info(f"Loading {source_name!r} (n={n:,}, split={cfg['split']}, config={hf_config})")
+        load_kw = {"split": cfg["split"], "streaming": True}
+        if hf_config:
+            load_kw["name"] = hf_config
+        ds = load_dataset(source_name, **load_kw)
+        ds = ds.shuffle(seed=seed, buffer_size=10_000)
+
+        rows = []
+        for ex in itertools.islice(ds, n):
+            user = ex.get(cfg["user_field"], "")
+            assistant = ex.get(cfg["assistant_field"], "")
+            if user and assistant:
+                rows.append({"conversations": _to_conversation(user, assistant)})
+
+        log.info(f"  Collected {len(rows):,} examples from {source_name}")
+        all_rows.extend(rows)
+
+    if not all_rows:
+        log.warning("No general data loaded")
+        return Dataset.from_dict({"input_ids": [], "labels": [], "attention_mask": []})
+
+    log.info(f"General data total: {len(all_rows):,} conversations")
+    ds = Dataset.from_list(all_rows)
+
+    def process(batch):
+        texts = [_apply_template(tokenizer, conv) for conv in batch["conversations"]]
+        enc = tokenizer(texts, truncation=True, max_length=max_length, padding=False)
+        enc["labels"] = [
+            _apply_chat_mask(ids, template_ids, im_end_id)
+            for ids in enc["input_ids"]
+        ]
+        return enc
+
+    ds = ds.map(process, batched=True, remove_columns=ds.column_names, num_proc=4,
+                desc="Tokenizing general reasoning data")
+    log.info(f"General dataset tokenized: {len(ds):,} examples")
+    return ds
+
+
+def mix_datasets(
+    reco_ds: Dataset, general_fraction: float,
+    tokenizer, template_ids: list[int], im_end_id: int,
+    max_length: int, seed: int,
+    sources: Optional[dict[str, float]] = None,
+) -> Dataset:
+    """Mix SID conversations with reasoning SFT data.
+
+    Args:
+        reco_ds: SID conversation dataset (already tokenized).
+        general_fraction: Fraction of general data in total mix (e.g. 0.25).
+            0 = no mixing. SID data count stays fixed, general is added on top.
+        tokenizer: For tokenizing general data.
+        template_ids, im_end_id: For instruction masking of general data.
+        max_length: Max sequence length.
+        seed: Random seed.
+        sources: Dict of {hf_dataset: weight}. Default: math 60%, code 20%, reasoning 20%.
+    """
+    if general_fraction <= 0:
+        return reco_ds
+
+    n_reco = len(reco_ds)
+    n_general = int(n_reco * general_fraction / (1.0 - general_fraction))
+
+    general_ds = load_general_dataset(
+        tokenizer, template_ids, im_end_id,
+        max_length, n_general, seed, sources,
+    )
+
+    mixed = concatenate_datasets([reco_ds, general_ds]).shuffle(seed=seed)
+    log.info(
+        f"Data mix: {n_reco:,} SID ({100*n_reco/len(mixed):.0f}%) + "
+        f"{len(general_ds):,} reasoning ({100*len(general_ds)/len(mixed):.0f}%) "
+        f"= {len(mixed):,} total"
+    )
+    return mixed
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
 def main():
-    p = argparse.ArgumentParser(description="Stage 2: Full fine-tuning (Qwen3-8B)")
+    p = argparse.ArgumentParser(description="Stage 2: Full fine-tuning (Qwen3-1.8B)")
     p.add_argument("--stage1-model", required=True)
     p.add_argument("--train-file", required=True)
     p.add_argument("--val-file", default=None)
@@ -332,16 +507,24 @@ def main():
     p.add_argument("--max-train-samples", type=int, default=None)
     p.add_argument("--max-val-samples", type=int, default=2_000)
 
-    # Hyperparams (aligned with 1.8B for experimental consistency)
+    # Hyperparams (aligned with 8B for experimental consistency)
     p.add_argument("--lr", type=float, default=2e-5)
-    p.add_argument("--batch-size", type=int, default=16)
-    p.add_argument("--grad-accum", type=int, default=8)
+    p.add_argument("--batch-size", type=int, default=64)
+    p.add_argument("--grad-accum", type=int, default=2)
     p.add_argument("--epochs", type=int, default=3)
+    p.add_argument("--max-steps", type=int, default=-1,
+                   help="Override total steps (-1 = use --epochs). Use for smoke tests.")
     p.add_argument("--warmup-ratio", type=float, default=0.03)
     p.add_argument("--weight-decay", type=float, default=0.01)
     p.add_argument("--seed", type=int, default=42)
 
+    # General data mixing (reasoning SFT datasets)
+    p.add_argument("--general-fraction", type=float, default=0.0,
+                   help="Fraction of general reasoning data in mix (0 = no mixing, 0.25 = 25%%)")
+
     p.add_argument("--packing", action="store_true")
+    p.add_argument("--gradient-checkpointing", action="store_true",
+                   help="Enable gradient checkpointing (recommended for 4B+ models)")
     p.add_argument("--no-torch-compile", action="store_true")
     p.add_argument("--snapshot-steps", type=int, default=2000)
     p.add_argument("--max-snapshots", type=int, default=3)
@@ -384,6 +567,11 @@ def main():
         args.train_file, tokenizer, template_ids, im_end_id,
         args.max_train_samples, args.max_seq_length, args.seed,
     )
+    train_ds = mix_datasets(
+        train_ds, args.general_fraction,
+        tokenizer, template_ids, im_end_id,
+        args.max_seq_length, args.seed,
+    )
     if args.packing:
         train_ds = pack_sequences(train_ds, args.max_seq_length, tokenizer.pad_token_id)
 
@@ -399,6 +587,7 @@ def main():
     # --- Callbacks ---
     output_path = Path(args.output_dir)
     callbacks = [
+        TrainingMonitorCallback(),
         ModelSnapshotCallback(args.snapshot_steps, output_path, tokenizer, args.max_snapshots),
     ]
     val_for_eval = args.val_file or args.train_file
@@ -426,28 +615,34 @@ def main():
 
             learning_rate=args.lr,
             num_train_epochs=args.epochs,
+            max_steps=args.max_steps,
             warmup_ratio=args.warmup_ratio,
             weight_decay=args.weight_decay,
             lr_scheduler_type="cosine_with_min_lr",
             lr_scheduler_kwargs={"min_lr_rate": 0.2},
             max_grad_norm=1.0,
+            adam_beta1=0.9,
+            adam_beta2=0.95,
             optim="adamw_8bit",
             seed=args.seed,
 
             bf16=is_bfloat16_supported(),
+            tf32=True,
             fp16=not is_bfloat16_supported(),
-            gradient_checkpointing=True,
-            gradient_checkpointing_kwargs={"use_reentrant": False},
+            gradient_checkpointing=args.gradient_checkpointing,
+            gradient_checkpointing_kwargs={"use_reentrant": False} if args.gradient_checkpointing else None,
             torch_compile=use_compile,
             torch_compile_backend="inductor" if use_compile else None,
 
-            dataloader_num_workers=4,
+            dataloader_num_workers=8,
             dataloader_pin_memory=True,
+            dataloader_prefetch_factor=4,
+            dataloader_persistent_workers=True,
 
             logging_steps=args.logging_steps,
             save_strategy="steps",
             save_steps=args.snapshot_steps,
-            save_total_limit=1,
+            save_total_limit=2,
             eval_strategy="steps" if val_ds else "no",
             eval_steps=args.eval_steps if val_ds else None,
             report_to=[] if args.no_wandb else ["wandb"],
@@ -487,6 +682,7 @@ def main():
         "max_seq_length": args.max_seq_length,
         "train_samples": len(train_ds),
         "packing": args.packing,
+        "general_fraction": args.general_fraction,
         "final_loss": result.metrics.get("train_loss"),
         "runtime_sec": result.metrics.get("train_runtime"),
     }, indent=2))

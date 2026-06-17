@@ -1,6 +1,8 @@
-# Qwen3-1.8B Semantic ID Training — vast.ai Deployment
+# Qwen3-1.7B Semantic ID Training — vast.ai Deployment
 
-Two-stage pipeline for training Qwen3-1.8B with semantic IDs for product recommendations.
+> **Примечание об имени каталога.** Каталог `fine_tune_1.8B/` и файлы `train_1.8b.py` сохраняют историческое имя по следующей причине: при первоначальном создании инфраструктуры предполагалось существование модели `Qwen3-1.8B`, однако [Qwen3 Technical Report (arXiv 2505.09388)](https://arxiv.org/abs/2505.09388) и [официальная карточка Qwen3-1.7B на Hugging Face](https://huggingface.co/Qwen/Qwen3-1.7B) подтверждают, что в dense-семействе Qwen3 нет модели 1.8B (доступны 0.6B, 1.7B, 4B, 8B, 14B, 32B). **Целевая модель — Qwen3-1.7B** (tied embeddings, hidden dim = 2048). Переименование каталога, скриптов, путей к артефактам и ссылок из `thesis/` и `research/` отложено до post-defense, чтобы не ломать воспроизводимые training-прогоны, attached артефакты и внешние ссылки. См. `thesis/chapter_2/2_llm_adaptation.md`, §2.2.1 — описание исходного состояния backbone и политики tied/untied.
+
+Two-stage pipeline for training Qwen3-1.7B with semantic IDs for product recommendations.
 
 ## Hardware Requirements
 

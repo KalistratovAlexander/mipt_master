@@ -105,7 +105,7 @@ def _paired_bootstrap(
         "ci_lo": float(lo),
         "ci_hi": float(hi),
         "p_value": p_two_sided,
-        "significant": (lo > 0) or (hi < 0),
+        "significant": bool((lo > 0) or (hi < 0)),
     }
 
 
