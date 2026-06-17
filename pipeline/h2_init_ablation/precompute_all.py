@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""One-shot pre-registration artifacts for H3 ablation.
+"""One-shot pre-registration artifacts for H2 ablation.
 
-Produces three files under artifacts/ that must exist before any run_h3.sh:
-  1. h3_init_scales.json — target Frobenius norm for scale-matched init.
+Produces three files under artifacts/ that must exist before any run_h2.sh:
+  1. h2_init_scales.json — target Frobenius norm for scale-matched init.
   2. codebook.pt         — (768 × 32) RQ-VAE codebook for arm D.
   3. title_token_ids_per_sid.json — per-SID title-BPE multiset for arm C.
 
@@ -60,7 +60,7 @@ def _git_sha(repo_dir: Path) -> str | None:
 
 
 def step_scales(args: argparse.Namespace) -> None:
-    """Write target_frobenius into artifacts/h3_init_scales.json."""
+    """Write target_frobenius into artifacts/h2_init_scales.json."""
     artifacts_path = Path(args.artifacts_path)
     with open(artifacts_path) as f:
         data = json.load(f)
@@ -211,7 +211,7 @@ def main() -> None:
     p.add_argument("--steps", default="scales,codebook,title-map",
                    help="Comma-separated subset of: scales, codebook, title-map")
     p.add_argument("--model-name", default="Qwen/Qwen3-0.6B")
-    p.add_argument("--artifacts-path", default=str(ARTIFACTS_DIR / "h3_init_scales.json"))
+    p.add_argument("--artifacts-path", default=str(ARTIFACTS_DIR / "h2_init_scales.json"))
     p.add_argument("--force", action="store_true",
                    help="[scales] overwrite target_frobenius (protocol violation post-run).")
     p.add_argument("--n-reps", type=int, default=32)

@@ -1,4 +1,4 @@
-"""Unit tests for H3 init strategies.
+"""Unit tests for H2 init strategies.
 
 Critical invariants under test:
   - Shape correctness per arm.

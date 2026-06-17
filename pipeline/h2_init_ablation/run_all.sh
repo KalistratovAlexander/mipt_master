@@ -1,18 +1,18 @@
 #!/bin/bash
 set -euo pipefail
 
-# Orchestrate all 12 H3 runs (4 arms × 3 seeds) + post-hoc diagnostics.
+# Orchestrate all 12 H2 runs (4 arms × 3 seeds) + post-hoc diagnostics.
 #
 # Skip-if-done: a run is skipped when BOTH results.json and results_unified.json
 # already exist for that (arm, seed). Delete either file to re-run.
 #
-# Respects DRY_RUN env var (passed through to run_h3.sh). Example:
+# Respects DRY_RUN env var (passed through to run_h2.sh). Example:
 #   DRY_RUN=1 bash run_all.sh   # ~10 min smoke over all 12
 #   bash run_all.sh             # full run (≈ full-scale training budget)
 
 WORKSPACE="${WORKSPACE:-/workspace}"
-H3_DIR="$WORKSPACE/h3_init_ablation"
-RUNS_DIR="$H3_DIR/runs"
+H2_DIR="$WORKSPACE/h2_init_ablation"
+RUNS_DIR="$H2_DIR/runs"
 
 ARMS=(A B C D)
 SEEDS=(42 43 44)
@@ -32,22 +32,22 @@ for arm in "${ARMS[@]}"; do
             continue
         fi
         echo ">>> [$N/$TOTAL] arm=$arm seed=$sd — running"
-        bash "$H3_DIR/run_h3.sh" "$arm" "$sd"
+        bash "$H2_DIR/run_h2.sh" "$arm" "$sd"
     done
 done
 
 # --- Transversal diagnostics (geometry) -------------------------------------
 echo ">>> [post-hoc] transversal_diagnostics.py"
-python3 "$H3_DIR/transversal_diagnostics.py" \
+python3 "$H2_DIR/transversal_diagnostics.py" \
     --runs-dir "$RUNS_DIR" \
-    --codebook-path "$H3_DIR/artifacts/codebook.pt" \
-    --output "$H3_DIR/results/transversal.json"
+    --codebook-path "$H2_DIR/artifacts/codebook.pt" \
+    --output "$H2_DIR/results/transversal.json"
 
 # --- Aggregate stats (primary hypothesis test + descriptive surface) --------
 echo ">>> [post-hoc] aggregate_stats.py"
-python3 "$H3_DIR/aggregate_stats.py" \
+python3 "$H2_DIR/aggregate_stats.py" \
     --runs-dir "$RUNS_DIR" \
-    --output "$H3_DIR/results/h3_summary.json"
+    --output "$H2_DIR/results/h2_summary.json"
 
 ELAPSED=$(( $(date +%s) - START_TS ))
-echo ">>> All done in $((ELAPSED / 60)) min → $H3_DIR/results/"
+echo ">>> All done in $((ELAPSED / 60)) min → $H2_DIR/results/"

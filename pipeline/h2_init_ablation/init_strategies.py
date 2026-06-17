@@ -1,9 +1,9 @@
-"""H3 4-way ablation: init strategies for new SID-token embedding rows.
+"""H2 4-way ablation: init strategies for new SID-token embedding rows.
 
 Produces new_rows ∈ R^{n_new × h} that get written to the last n_new positions
 of the embedding matrix after resize_token_embeddings().
 
-Scale normalization is pre-registered (artifacts/h3_init_scales.json) and applied
+Scale normalization is pre-registered (artifacts/h2_init_scales.json) and applied
 per-block (control vs SID) so that neither scale is a confound between arms.
 
 Convention: first 3 new tokens are control (<|rec|>, <|sid_start|>, <|sid_end|>);
@@ -187,7 +187,7 @@ def compute_target_frobenius(
     """Expected Frobenius norm of a random n_new-row slice of E_existing.
 
     Deterministic given (E_existing, seed). Value is committed to
-    artifacts/h3_init_scales.json before any training run.
+    artifacts/h2_init_scales.json before any training run.
     """
     gen = torch.Generator(device=E_existing.device).manual_seed(seed)
     V = E_existing.shape[0]
@@ -273,7 +273,7 @@ def apply_init_to_model(
     rqvae_codebook: Optional[torch.Tensor] = None,
     title_token_ids_per_sid: Optional[list[list[int]]] = None,
 ) -> None:
-    """Write H3 init into model's last N_NEW_TOTAL embedding rows in place.
+    """Write H2 init into model's last N_NEW_TOTAL embedding rows in place.
 
     Pre-conditions:
       - model.resize_token_embeddings(V_old + N_NEW_TOTAL) already called.
@@ -299,7 +299,7 @@ def apply_init_to_model(
         W[-N_NEW_TOTAL:] = new_rows.to(W.dtype).to(W.device)
         out_emb = model.get_output_embeddings()
         if out_emb is not None and out_emb.weight is not W:
-            # Untied — out of H3 scope, but keep safe default: mirror input.
+            # Untied — out of H2 scope, but keep safe default: mirror input.
             out_emb.weight[-N_NEW_TOTAL:] = new_rows.to(out_emb.weight.dtype).to(out_emb.weight.device)
 
 

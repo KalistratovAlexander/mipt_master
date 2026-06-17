@@ -1,18 +1,18 @@
 #!/bin/bash
 set -euo pipefail
 
-# Pack vast.ai training package for H3 init-ablation (Qwen3-0.6B)
-# Creates h3_vast_package.tar.gz with the correct /workspace structure
+# Pack vast.ai training package for H2 init-ablation (Qwen3-0.6B)
+# Creates h2_vast_package.tar.gz with the correct /workspace structure
 #
-# Usage: bash pipeline/h3_init_ablation/pack_h3.sh
+# Usage: bash pipeline/h2_init_ablation/pack_h2.sh
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
-FT_DIR="$PROJECT_DIR/pipeline/fine_tune_1.8B"
+FT_DIR="$PROJECT_DIR/pipeline/fine_tune_h1"
 EVAL_DIR="$PROJECT_DIR/pipeline/evaluation"
-OUT="$PROJECT_DIR/h3_vast_package.tar.gz"
+OUT="$PROJECT_DIR/h2_vast_package.tar.gz"
 
-echo ">>> Building H3 vast.ai package..."
+echo ">>> Building H2 vast.ai package..."
 
 # --- Verify source files exist ---
 DATA_DIR="$PROJECT_DIR/data/semantic_llm_training"
@@ -53,12 +53,12 @@ echo "  Copying shared evaluator..."
 mkdir -p "$TMP/evaluation"
 cp "$EVAL_DIR/evaluate_unified.py" "$TMP/evaluation/"
 
-echo "  Copying H3 module..."
-mkdir -p "$TMP/h3_init_ablation"
-cp "$SCRIPT_DIR"/*.py "$TMP/h3_init_ablation/"
-cp "$SCRIPT_DIR"/*.sh "$TMP/h3_init_ablation/"
-cp -r "$SCRIPT_DIR/artifacts" "$TMP/h3_init_ablation/"
-mkdir -p "$TMP/h3_init_ablation/runs" "$TMP/h3_init_ablation/results"
+echo "  Copying H2 module..."
+mkdir -p "$TMP/h2_init_ablation"
+cp "$SCRIPT_DIR"/*.py "$TMP/h2_init_ablation/"
+cp "$SCRIPT_DIR"/*.sh "$TMP/h2_init_ablation/"
+cp -r "$SCRIPT_DIR/artifacts" "$TMP/h2_init_ablation/"
+mkdir -p "$TMP/h2_init_ablation/runs" "$TMP/h2_init_ablation/results"
 
 # --- Create archive ---
 echo "  Compressing..."
@@ -71,7 +71,7 @@ echo "Upload to vast.ai:"
 echo "  scp -P <PORT> $OUT root@<HOST>:/workspace/"
 echo ""
 echo "Then on server:"
-echo "  cd /workspace && tar xf h3_vast_package.tar.gz"
-echo "  cd /workspace && python3 h3_init_ablation/precompute_all.py  # one-shot pre-reg"
-echo "  DRY_RUN=1 bash h3_init_ablation/run_h3.sh A 42   # smoke test (~10 min)"
-echo "  bash h3_init_ablation/run_all.sh                 # 12 runs + diagnostics"
+echo "  cd /workspace && tar xf h2_vast_package.tar.gz"
+echo "  cd /workspace && python3 h2_init_ablation/precompute_all.py  # one-shot pre-reg"
+echo "  DRY_RUN=1 bash h2_init_ablation/run_h2.sh A 42   # smoke test (~10 min)"
+echo "  bash h2_init_ablation/run_all.sh                 # 12 runs + diagnostics"

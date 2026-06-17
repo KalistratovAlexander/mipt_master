@@ -28,7 +28,7 @@ General:
   - Perplexity on WikiText-2 (catastrophic forgetting)
 
 Usage:
-  python pipeline/evaluate_unified.py \
+  python pipeline/evaluation/evaluate_unified.py \
     --model-path vast_8b/stage2_full_finetune/output/final \
     --data-dir data \
     --model-name "8B" \
@@ -36,7 +36,7 @@ Usage:
     --beam-size 10 \
     --output results/eval_8b.json
 
-  python pipeline/evaluate_unified.py \
+  python pipeline/evaluation/evaluate_unified.py \
     --model-path vast/stage2_full_finetune/output/stage2_h100/final \
     --data-dir data \
     --model-name "1.8B" \
@@ -1267,7 +1267,7 @@ def generate_sampling(
     temperature: float = 0.7,
     top_p: float = 0.9,
 ) -> List[str]:
-    """Generate multiple candidates via sampling (like old eval_vast.py)."""
+    """Generate multiple candidates via sampling."""
     inputs = tokenizer(prompt, return_tensors="pt").to(model.device)
     results = []
     for _ in range(n_generations):
@@ -1458,7 +1458,7 @@ def benchmark_performance(
         warmup_iters: warmup iterations (not measured)
         bench_iters: measured iterations
         batch_size: number of identical prompts per forward pass.
-            At batch_size=1 → single-user latency (D1-D6 in METRICS_FROZEN).
+            At batch_size=1 → single-user latency (D1-D6).
             At batch_size=32 → production throughput (D7-D11). TPS metrics are
             reported as aggregate (per_seq_tokens * batch_size / time).
 

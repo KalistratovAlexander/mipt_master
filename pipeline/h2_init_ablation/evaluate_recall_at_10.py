@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""H3 primary-metric evaluator: Recall@10 on text→SID (title_to_sid task).
+"""H2 primary-metric evaluator: Recall@10 on text→SID (title_to_sid task).
 
 Loads a stage-2 model checkpoint, runs beam-search (beam=10) on the
 `title_to_sid` subset of the held-out validation conversations, and writes
@@ -32,7 +32,7 @@ logging.basicConfig(
     format="%(asctime)s | %(levelname)-5s | %(message)s",
     datefmt="%H:%M:%S",
 )
-log = logging.getLogger("h3-eval")
+log = logging.getLogger("h2-eval")
 
 _SID_RE = re.compile(
     r"<\|sid_start\|><\|A(\d+)\|><\|B(\d+)\|><\|C(\d+)\|><\|D(\d+)\|><\|sid_end\|>"

@@ -127,35 +127,35 @@ def _init_new_rows(weight: torch.Tensor, n_new: int) -> None:
     weight[-n_new:] = (mean + z @ L.T).to(weight.dtype)
 
 
-def _init_h3(model, n_new: int, h3: dict) -> None:
-    """H3 ablation init. Dispatches to pipeline/h3_init_ablation/init_strategies."""
+def _init_h2(model, n_new: int, h2: dict) -> None:
+    """H2 ablation init. Dispatches to pipeline/h2_init_ablation/init_strategies."""
     import sys
-    sys.path.insert(0, h3["module_path"])
+    sys.path.insert(0, h2["module_path"])
     from init_strategies import apply_init_to_model  # noqa: E402
 
-    codebook = torch.load(h3["codebook_path"], map_location="cpu") if h3["arm"] == "D" else None
+    codebook = torch.load(h2["codebook_path"], map_location="cpu") if h2["arm"] == "D" else None
     titles = None
-    if h3["arm"] == "C":
-        with open(h3["title_map_path"]) as f:
+    if h2["arm"] == "C":
+        with open(h2["title_map_path"]) as f:
             titles = json.load(f)
 
     apply_init_to_model(
         model=model,
-        arm=h3["arm"],
-        seed=h3["seed"],
-        target_frobenius_ctrl=h3["target_frobenius_ctrl"],
-        target_frobenius_sid=h3["target_frobenius_sid"],
+        arm=h2["arm"],
+        seed=h2["seed"],
+        target_frobenius_ctrl=h2["target_frobenius_ctrl"],
+        target_frobenius_sid=h2["target_frobenius_sid"],
         rqvae_codebook=codebook,
         title_token_ids_per_sid=titles,
     )
     log.info(
-        f"H3 init: arm={h3['arm']} seed={h3['seed']} "
-        f"target_ctrl={h3['target_frobenius_ctrl']:.6f} "
-        f"target_sid={h3['target_frobenius_sid']:.6f}"
+        f"H2 init: arm={h2['arm']} seed={h2['seed']} "
+        f"target_ctrl={h2['target_frobenius_ctrl']:.6f} "
+        f"target_sid={h2['target_frobenius_sid']:.6f}"
     )
 
 
-def extend_vocabulary(model, tokenizer, h3: dict | None = None) -> int:
+def extend_vocabulary(model, tokenizer, h2: dict | None = None) -> int:
     tokens = make_sid_tokens()
     n_before = len(tokenizer)
     tokenizer.add_tokens(tokens, special_tokens=True)
@@ -167,8 +167,8 @@ def extend_vocabulary(model, tokenizer, h3: dict | None = None) -> int:
     model.resize_token_embeddings(len(tokenizer))
 
     with torch.no_grad():
-        if h3 is not None:
-            _init_h3(model, n_new, h3)
+        if h2 is not None:
+            _init_h2(model, n_new, h2)
         else:
             in_emb = model.get_input_embeddings()
             _init_new_rows(in_emb.weight, n_new)
@@ -320,14 +320,14 @@ def main():
     p.add_argument("--eval-steps", type=int, default=200)
     p.add_argument("--no-wandb", action="store_true")
 
-    # --- H3 ablation ----------------------------------------------------------
+    # --- H2 ablation ----------------------------------------------------------
     # Default 'original' preserves the existing 1.7B training path byte-identical.
     p.add_argument("--init-strategy", choices=["original", "A", "B", "C", "D"],
                    default="original",
                    help="Embedding init for new SID tokens. 'original' = legacy diag-std; "
-                        "A/B/C/D dispatch to pipeline/h3_init_ablation/init_strategies.")
+                        "A/B/C/D dispatch to pipeline/h2_init_ablation/init_strategies.")
     p.add_argument("--init-seed", type=int, default=None,
-                   help="Seed for H3 init sampling. Defaults to --seed when omitted.")
+                   help="Seed for H2 init sampling. Defaults to --seed when omitted.")
     p.add_argument("--target-frobenius-ctrl", type=float, default=None,
                    help="Pre-registered Frobenius target for the 3 control-token rows "
                         "(required when --init-strategy != original).")
@@ -338,21 +338,21 @@ def main():
                    help="Path to RQ-VAE codebook .pt (required for arm D).")
     p.add_argument("--title-map-path", default=None,
                    help="Path to title_token_ids_per_sid.json (required for arm C).")
-    p.add_argument("--h3-module-path", default=None,
-                   help="Path to pipeline/h3_init_ablation dir (auto-detected from script location if omitted).")
+    p.add_argument("--h2-module-path", default=None,
+                   help="Path to pipeline/h2_init_ablation dir (auto-detected from script location if omitted).")
     args = p.parse_args()
 
-    h3 = None
+    h2 = None
     if args.init_strategy != "original":
         if args.target_frobenius_ctrl is None or args.target_frobenius_sid is None:
             p.error("--target-frobenius-ctrl and --target-frobenius-sid are required "
                     "when --init-strategy != original")
-        module_path = args.h3_module_path or str(
-            Path(__file__).resolve().parents[2] / "h3_init_ablation"
+        module_path = args.h2_module_path or str(
+            Path(__file__).resolve().parents[2] / "h2_init_ablation"
         )
         if not Path(module_path).exists():
-            p.error(f"H3 module dir not found: {module_path}; pass --h3-module-path")
-        h3 = {
+            p.error(f"H2 module dir not found: {module_path}; pass --h2-module-path")
+        h2 = {
             "arm": args.init_strategy,
             "seed": args.init_seed if args.init_seed is not None else args.seed,
             "target_frobenius_ctrl": args.target_frobenius_ctrl,
@@ -388,7 +388,7 @@ def main():
         trust_remote_code=True,
     )
 
-    n_new = extend_vocabulary(model, tokenizer, h3=h3)
+    n_new = extend_vocabulary(model, tokenizer, h2=h2)
     freeze_except_embeddings(model)
 
     template_ids, im_end_id = _get_masking_ids(tokenizer)

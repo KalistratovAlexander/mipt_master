@@ -7,17 +7,17 @@ set -euo pipefail
 # Arm-symmetric: applied identically to all 12 (arm, seed) combos.
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 
-# H3 init-ablation runner — one (arm, seed) combo.
+# H2 init-ablation runner — one (arm, seed) combo.
 #
-# Assumes layout produced by pack_h3.sh:
+# Assumes layout produced by pack_h2.sh:
 #   /workspace/
-#     data/  stage1/  stage2/  h3_init_ablation/  setup.sh
+#     data/  stage1/  stage2/  h2_init_ablation/  setup.sh
 #
 # Usage (on vast.ai):
-#   bash /workspace/h3_init_ablation/run_h3.sh <ARM> <SEED>
+#   bash /workspace/h2_init_ablation/run_h2.sh <ARM> <SEED>
 #
 # Pre-reqs:
-#   1. artifacts/h3_init_scales.json has non-null target_frobenius_ctrl AND
+#   1. artifacts/h2_init_scales.json has non-null target_frobenius_ctrl AND
 #      target_frobenius_sid (run precompute_all.py before the first training run).
 #   2. For arm C: artifacts/title_token_ids_per_sid.json exists.
 #   3. For arm D: artifacts/codebook.pt exists.
@@ -26,11 +26,11 @@ ARM="${1:?arm required: A|B|C|D}"
 SEED="${2:?seed required: int}"
 
 WORKSPACE="${WORKSPACE:-/workspace}"
-H3_DIR="$WORKSPACE/h3_init_ablation"
+H2_DIR="$WORKSPACE/h2_init_ablation"
 DATA_DIR="$WORKSPACE/data"
-SCALES_JSON="$H3_DIR/artifacts/h3_init_scales.json"
-RUN_DIR="$H3_DIR/runs/arm_${ARM}_seed_${SEED}"
-MODEL_NAME="${H3_MODEL_NAME:-Qwen/Qwen3-0.6B}"
+SCALES_JSON="$H2_DIR/artifacts/h2_init_scales.json"
+RUN_DIR="$H2_DIR/runs/arm_${ARM}_seed_${SEED}"
+MODEL_NAME="${H2_MODEL_NAME:-Qwen/Qwen3-0.6B}"
 
 # DRY_RUN=1 → ~10 min smoke test with tiny samples/steps. Default = full run.
 DRY_RUN="${DRY_RUN:-0}"
@@ -61,12 +61,12 @@ echo ">>> arm=$ARM seed=$SEED model=$MODEL_NAME  target_ctrl=$TARGET_CTRL  targe
 # Arm-specific extra flags ----------------------------------------------------
 ARM_EXTRA=()
 if [[ "$ARM" == "C" ]]; then
-    TITLE_MAP="$H3_DIR/artifacts/title_token_ids_per_sid.json"
+    TITLE_MAP="$H2_DIR/artifacts/title_token_ids_per_sid.json"
     [[ -f "$TITLE_MAP" ]] || { echo "ERROR: $TITLE_MAP missing (required for arm C)"; exit 1; }
     ARM_EXTRA+=(--title-map-path "$TITLE_MAP")
 fi
 if [[ "$ARM" == "D" ]]; then
-    CODEBOOK="$H3_DIR/artifacts/codebook.pt"
+    CODEBOOK="$H2_DIR/artifacts/codebook.pt"
     [[ -f "$CODEBOOK" ]] || { echo "ERROR: $CODEBOOK missing (required for arm D)"; exit 1; }
     ARM_EXTRA+=(--rqvae-codebook-path "$CODEBOOK")
 fi
@@ -96,7 +96,7 @@ else
         --init-seed "$SEED" \
         --target-frobenius-ctrl "$TARGET_CTRL" \
         --target-frobenius-sid "$TARGET_SID" \
-        --h3-module-path "$H3_DIR" \
+        --h2-module-path "$H2_DIR" \
         "${ARM_EXTRA[@]}" \
         2>&1 | tee "$RUN_DIR/stage1.log"
 fi
@@ -124,7 +124,7 @@ fi
 # Writes per-sample hit@10 array consumed by aggregate_stats.py paired bootstrap.
 # FA2 + batched decode + early-stop on <|sid_end|> → ~5-10× speedup vs default.
 echo ">>> [$(date +%T)] Evaluating primary Recall@10 (title_to_sid)"
-python3 "$H3_DIR/evaluate_recall_at_10.py" \
+python3 "$H2_DIR/evaluate_recall_at_10.py" \
     --model-path "$STAGE2_OUT/final" \
     --val-file "$DATA_DIR/semantic_llm_training/Pet_Supplies_conversations_val.parquet" \
     --n-samples "$EVAL_N_SAMPLES" --beam-size 10 --seed 42 \
@@ -149,14 +149,14 @@ python3 "$WORKSPACE/evaluation/evaluate_unified.py" \
     2>&1 | tee "$RUN_DIR/eval_unified.log"
 
 # --- Eval 3: learning curve — Recall@10 on title_to_sid per snapshot --------
-# 6 snapshots × N=1000 per §3.2.7 of thesis/h3_metrics_plan.md.
+# 6 snapshots × N=1000 per §3.2.7 of thesis/h2_metrics_plan.md.
 echo ">>> [$(date +%T)] Evaluating learning curve (Recall@10 per snapshot)"
 mkdir -p "$RUN_DIR/learning_curve"
 for snap in "$STAGE2_OUT/snapshots"/step-*; do
     [[ -d "$snap" ]] || continue
     step=$(basename "$snap" | sed 's/^step-//')
     echo ">>> [$(date +%T)]  snapshot step=$step"
-    python3 "$H3_DIR/evaluate_recall_at_10.py" \
+    python3 "$H2_DIR/evaluate_recall_at_10.py" \
         --model-path "$snap" \
         --val-file "$DATA_DIR/semantic_llm_training/Pet_Supplies_conversations_val.parquet" \
         --n-samples "$EVAL_N_SAMPLES" --beam-size 10 --seed 42 \

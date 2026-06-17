@@ -2,6 +2,6 @@ runs/*
 !runs/.gitkeep
 results/*
 !results/.gitkeep
-!results/h3_summary.json
+!results/h2_summary.json
 __pycache__/
 *.pyc

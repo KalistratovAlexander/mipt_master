@@ -1,5 +1,5 @@
 {
-  "_comment": "Pre-registered constants for H3 4-way ablation. Committed BEFORE first training run. Editing after runs start = protocol violation.",
+  "_comment": "Pre-registered constants for H2 4-way ablation. Committed BEFORE first training run. Editing after runs start = protocol violation.",
   "_status": "target_frobenius=29.945332 from Qwen/Qwen3-0.6B via compute_target_frobenius(E, 1027, seed=0, n_reps=32). Split: ctrl=1.618470, sid=29.901563 (ctrl²+sid²=total²). Block-separate normalization keeps control-token magnitude arm-invariant. COMMITTED — editing after first run is a protocol violation.",
   "model_name": "Qwen/Qwen3-0.6B",
   "hidden_dim": 1024,

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Partial aggregation of H3 runs — tolerant to missing (arm, seed) combos.
+"""Partial aggregation of H2 runs — tolerant to missing (arm, seed) combos.
 
 Sibling of aggregate_stats.py for mid-run peeks. Reports whatever it can
 given the (arm, seed) combos that have finished, and notes what's still
@@ -9,7 +9,7 @@ Does NOT replace aggregate_stats.py — the final registered analysis must
 wait for the full 12-run grid. This is diagnostic only.
 
 Usage:
-    python partial_aggregate.py --runs-dir /workspace/h3_init_ablation/runs
+    python partial_aggregate.py --runs-dir /workspace/h2_init_ablation/runs
 """
 from __future__ import annotations
 

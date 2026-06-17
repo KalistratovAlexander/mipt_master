@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""H3 final statistics: primary hypothesis test + descriptive surface.
+"""H2 final statistics: primary hypothesis test + descriptive surface.
 
 Walks runs/arm_{A,B,C,D}_seed_{42,43,44}/ and collects:
   1. results.json           — primary metric (Recall@10 on title_to_sid)
@@ -24,7 +24,7 @@ Descriptive surface:
 
 Arm B is descriptive-only (variance-matched random control).
 
-Writes results/h3_summary.json.
+Writes results/h2_summary.json.
 """
 from __future__ import annotations
 
@@ -113,9 +113,9 @@ def main() -> None:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--runs-dir", default=str(Path(__file__).parent / "runs"))
     p.add_argument("--artifacts-path",
-                   default=str(Path(__file__).parent / "artifacts" / "h3_init_scales.json"))
+                   default=str(Path(__file__).parent / "artifacts" / "h2_init_scales.json"))
     p.add_argument("--output",
-                   default=str(Path(__file__).parent / "results" / "h3_summary.json"))
+                   default=str(Path(__file__).parent / "results" / "h2_summary.json"))
     p.add_argument("--n-bootstrap", type=int, default=10_000)
     p.add_argument("--seed", type=int, default=0)
     args = p.parse_args()

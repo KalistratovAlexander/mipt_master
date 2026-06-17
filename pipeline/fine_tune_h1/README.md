@@ -1,8 +1,8 @@
-# Qwen3-1.7B Semantic ID Training — vast.ai Deployment
+# H1 — Qwen3 Semantic ID Training (0.6B / 1.7B / 4B / 8B) — vast.ai Deployment
 
-> **Примечание об имени каталога.** Каталог `fine_tune_1.8B/` и файлы `train_1.8b.py` сохраняют историческое имя по следующей причине: при первоначальном создании инфраструктуры предполагалось существование модели `Qwen3-1.8B`, однако [Qwen3 Technical Report (arXiv 2505.09388)](https://arxiv.org/abs/2505.09388) и [официальная карточка Qwen3-1.7B на Hugging Face](https://huggingface.co/Qwen/Qwen3-1.7B) подтверждают, что в dense-семействе Qwen3 нет модели 1.8B (доступны 0.6B, 1.7B, 4B, 8B, 14B, 32B). **Целевая модель — Qwen3-1.7B** (tied embeddings, hidden dim = 2048). Переименование каталога, скриптов, путей к артефактам и ссылок из `thesis/` и `research/` отложено до post-defense, чтобы не ломать воспроизводимые training-прогоны, attached артефакты и внешние ссылки. См. `thesis/chapter_2/2_llm_adaptation.md`, §2.2.1 — описание исходного состояния backbone и политики tied/untied.
+> **Примечание об именах файлов.** Файлы `train_1.8b.py` сохраняют историческое имя: при создании инфраструктуры предполагалась модель `Qwen3-1.8B`, но в dense-семействе Qwen3 такой модели нет ([Qwen3 Technical Report, arXiv 2505.09388](https://arxiv.org/abs/2505.09388); [карточка Qwen3-1.7B](https://huggingface.co/Qwen/Qwen3-1.7B); доступны 0.6B, 1.7B, 4B, 8B, 14B, 32B). Конкретный размер задаётся скриптами `run_<size>.sh`, а единый тренажёр `train_1.8b.py` параметризуется размером модели.
 
-Two-stage pipeline for training Qwen3-1.7B with semantic IDs for product recommendations.
+Two-stage pipeline for training Qwen3 (0.6B / 1.7B / 4B / 8B) with semantic IDs for product recommendations.
 
 ## Hardware Requirements
 
@@ -38,8 +38,8 @@ Two-stage pipeline for training Qwen3-1.7B with semantic IDs for product recomme
 
 ```bash
 cd /path/to/mipt_master
-bash vast/pack.sh
-# Creates: vast_training_package.tar.gz (~300 MB)
+bash pipeline/fine_tune_h1/pack.sh 8b   # размер: 0.6b | 1.8b | 4b | 8b
+# Creates: vast_<MODEL>_package.tar.gz (~300 MB)
 ```
 
 ### 2. Upload to vast.ai
